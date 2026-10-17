@@ -18,6 +18,9 @@ button, input { font: inherit; }
 .brand-lockup small { margin-top: .12rem; color: #e3c98d; font-size: .7rem; }
 .overlay-panel { border: 1px solid rgba(255, 218, 139, .28); border-radius: 10px; color: #f6f0df; background: linear-gradient(145deg, rgba(38, 31, 22, .93), rgba(21, 19, 16, .86)); box-shadow: 0 18px 50px rgba(0,0,0,.24); backdrop-filter: blur(14px); }
 .planner-panel { top: 6.8rem; left: 1.75rem; width: min(360px, calc(100vw - 3.5rem)); padding: 1.35rem; }
+.panel-header, .routes-heading-actions { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+.panel-toggle { display: grid; place-items: center; width: 1.7rem; height: 1.7rem; padding: 0; color: #ffe19a; background: rgba(255, 225, 154, .08); border: 1px solid #8b6b3d; font-size: 1.15rem; line-height: 1; }
+.panel-toggle:hover { background: rgba(255, 225, 154, .18); }
 .panel-kicker { color: #e8b85d; font-size: .68rem; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
 h1, h2, h3 { font-family: "Space Grotesk", sans-serif; }
 .planner-panel h1 { margin: .45rem 0 .35rem; font-size: 2.2rem; line-height: 1; letter-spacing: 0; }
@@ -76,6 +79,7 @@ button:disabled { cursor: wait; opacity: .58; }
 .light-app .selection-status strong, .light-app .hint, .light-app .empty-state, .light-app .result-note, .light-app .route-option-main small, .light-app .route-option-score small, .light-app .detail-grid small { color: #8a7452; }
 .light-app input { color: #2c261e; background: rgba(255, 255, 255, .7); border-color: #c7b38d; color-scheme: light; }
 .light-app .secondary-button { color: #76572c !important; background: rgba(255, 255, 255, .55) !important; border-color: #c7b38d !important; }
+.light-app .panel-toggle { color: #76572c; background: rgba(255, 255, 255, .55); border-color: #c7b38d; }
 .light-app .route-option { color: #2c261e; background: rgba(255,255,255,.38); border-color: rgba(116, 78, 28, .16); }
 .light-app .uv-context { background: rgba(246, 193, 90, .18); }
 .light-app .uv-context strong { color: #76572c; }

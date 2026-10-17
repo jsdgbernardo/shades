@@ -7,7 +7,9 @@ import "./styles.css";
 
 const MAP_CENTER = [14.6407, 121.0748];
 const SHADE_COLORS = ["#d9f0f2", "#9fd5d1", "#5fafa8", "#2d7f80", "#1f4f5a"];
+const LIGHT_SHADE_COLORS = ["#5fafa8", "#3f8f8e", "#2d7277", "#1f5964", "#16414e"];
 const SUN_COLOR = "#f6c15a";
+const LIGHT_SUN_COLOR = "#a66a18";
 const START_COLOR = "#ffe19a";
 const DESTINATION_COLOR = "#d78232";
 
@@ -44,8 +46,8 @@ function RouteMap({ start, destination, routes, selectedRouteId, onMapClick, onR
             positions={segment.geometry.map(([longitude, latitude]) => [latitude, longitude])}
             eventHandlers={{ click: (event) => { DomEvent.stopPropagation(event.originalEvent); onRouteClick(route.id); } }}
             pathOptions={{
-              color: segment.status === "sun-exposed" ? SUN_COLOR : SHADE_COLORS[Math.min(SHADE_COLORS.length - 1, Math.max(0, (segment.shade_level ?? 1) - 1))],
-              opacity: selectedRouteId === route.id ? 1 : 0.5,
+              color: segment.status === "sun-exposed" ? (mapTheme === "light" ? LIGHT_SUN_COLOR : SUN_COLOR) : (mapTheme === "light" ? LIGHT_SHADE_COLORS : SHADE_COLORS)[Math.min(SHADE_COLORS.length - 1, Math.max(0, (segment.shade_level ?? 1) - 1))],
+              opacity: selectedRouteId === route.id ? 1 : mapTheme === "light" ? 0.8 : 0.5,
               weight: selectedRouteId === route.id ? 8 : 5,
             }}
           />
@@ -64,6 +66,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [mapTheme, setMapTheme] = useState("dark");
   const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [plannerMinimized, setPlannerMinimized] = useState(false);
+  const [routesMinimized, setRoutesMinimized] = useState(false);
 
   function selectPoint({ lat, lng }) {
     const point = { latitude: Number(lat.toFixed(6)), longitude: Number(lng.toFixed(6)) };
@@ -120,14 +124,15 @@ function App() {
 
       <div className="map-wash" />
       <header className="topbar">
-        <div className="brand-lockup"><span className="brand-mark">S</span><span><strong>SHADE</strong><small>Katipunan / ADMU</small></span></div>
+        <div className="brand-lockup"><span className="brand-mark">S</span><span><strong>SHADES</strong><small>Katipunan / ADMU</small></span></div>
         <button type="button" className="map-theme-button" onClick={() => setMapTheme(mapTheme === "dark" ? "light" : "dark")}>{mapTheme === "dark" ? "Light mode" : "Dark mode"}</button>
       </header>
 
       <form onSubmit={submitRoute} className="planner-panel overlay-panel">
-        <div className="panel-kicker">Route planner</div>
-        <h1>Walk in the shade.</h1>
-        <p className="panel-copy">Choose two points on the map to compare sun exposure.</p>
+        <div className="panel-header"><div className="panel-kicker">Route planner</div><button type="button" className="panel-toggle" aria-label={plannerMinimized ? "Expand route planner" : "Minimize route planner"} title={plannerMinimized ? "Expand route planner" : "Minimize route planner"} onClick={() => setPlannerMinimized(!plannerMinimized)}>{plannerMinimized ? "+" : "−"}</button></div>
+        {!plannerMinimized && <>
+          <h1>Walk in the shade.</h1>
+          <p className="panel-copy">Choose two points on the map to compare sun exposure.</p>
           <div className="selection-status">
             <div><span className="point-dot start-dot" />Start <strong>{start ? "Selected" : "Click the map"}</strong></div>
             <div><span className="point-dot destination-dot" />Destination <strong>{destination ? "Selected" : "Click the map"}</strong></div>
@@ -139,13 +144,15 @@ function App() {
           <button type="submit" disabled={loading || !start || !destination}>{loading ? "Calculating..." : "Preview route"}</button>
           <button type="button" className="secondary-button" onClick={resetPoints}>Reset selection</button>
           <p className="hint">Click once for start and again for destination. A third click begins a new selection.</p>
+        </>}
       </form>
 
       <aside className="routes-panel overlay-panel" aria-live="polite">
-        <div className="routes-heading"><div><div className="panel-kicker">Available routes</div><h2>{result ? `${result.routes.length} ways to go` : "Your routes"}</h2></div><span className="route-count">{result ? "LIVE" : "READY"}</span></div>
-        {!result && !error && <p className="empty-state">Your route options will appear here.</p>}
-        {error && <p className="error">{error}</p>}
-        {result && <>
+        <div className="routes-heading"><div><div className="panel-kicker">Available routes</div><h2>{result ? `${result.routes.length} ways to go` : "Your routes"}</h2></div><div className="routes-heading-actions"><span className="route-count">{result ? "LIVE" : "READY"}</span><button type="button" className="panel-toggle" aria-label={routesMinimized ? "Expand route options" : "Minimize route options"} title={routesMinimized ? "Expand route options" : "Minimize route options"} onClick={() => setRoutesMinimized(!routesMinimized)}>{routesMinimized ? "+" : "−"}</button></div></div>
+        {!routesMinimized && <>
+          {!result && !error && <p className="empty-state">Your route options will appear here.</p>}
+          {error && <p className="error">{error}</p>}
+          {result && <>
           <p className="result-note">{result.message}</p>
           <div className="uv-context"><div><span className="panel-kicker">UV context</span><strong>{result.uv_context?.status === "available" ? `UV ${result.uv_context.index}` : "Unavailable"}</strong></div><small>{result.uv_context?.status === "available" ? `${result.uv_context.category} · ${result.uv_context.source}` : result.uv_context?.message}</small><em>Context only, not a shade measurement.</em></div>
           <div className="route-list">
@@ -161,6 +168,7 @@ function App() {
             const route = result.routes.find((item) => item.id === selectedRouteId);
             return route ? <div className="route-detail"><span className="panel-kicker">Selected route</span><h3>{route.label}</h3><div className="detail-grid"><div><strong>{route.exposure.shaded_percent}%</strong><small>shaded</small></div><div><strong>{route.exposure.sun_exposed_percent}%</strong><small>sun-exposed</small></div><div><strong>{route.distance_m} m</strong><small>distance</small></div></div></div> : null;
           })()}
+          </>}
         </>}
       </aside>
 

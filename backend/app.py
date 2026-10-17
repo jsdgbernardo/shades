@@ -153,7 +153,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     server = ThreadingHTTPServer(("127.0.0.1", 8000), RequestHandler)
-    print("Shade API listening on http://127.0.0.1:8000")
+    print("Shades API listening on http://127.0.0.1:8000")
     server.serve_forever()
 
 

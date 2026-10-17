@@ -29,6 +29,27 @@ This boundary is intentionally small enough for a fast prototype and includes th
 - Added a full-screen navigation-style map with route overlays, route selection, floating controls, reset selection, and dark/light application themes.
 - Added live Open-Meteo UV context with in-memory caching and an explicit disclaimer that UV is not a shade measurement.
 
+### Shade estimation method
+
+The current prototype estimates shade as follows:
+
+1. The selected walking route is divided into consecutive route segments. Each segment is represented by its midpoint for shade analysis.
+2. The backend calculates the sun's elevation and azimuth from the selected local date/time and the route's geographic position.
+3. The 2026 building-height GeoTIFF is loaded into memory. Its WGS84 coordinates are converted into raster rows and columns, and non-finite or extreme nodata values are treated as zero height.
+4. From each segment midpoint, the algorithm samples the direction toward the sun every 2 meters, from 2 meters out to 200 meters.
+5. At each sample, the building height is compared with the line-of-sight clearance:
+
+	`required height = pedestrian eye height + distance * tan(sun elevation)`
+
+	The prototype uses `1.7` meters as pedestrian eye height. If a sampled building is taller than the required height, the segment is considered shaded.
+6. The obstruction-to-clearance ratio produces a shade level from 1 to 4 for the teal route colors. If no obstruction is detected, the segment is sun-exposed. If the sun is below the horizon, the segment is treated as shaded.
+
+The route shade percentage is currently distance-weighted but binary at the segment level:
+
+`shade percentage = shaded segment distance / total route distance * 100`
+
+Therefore, any detected obstruction makes the whole tested segment count as shaded. The teal intensity shows obstruction strength visually, but does not yet weight the percentage itself.
+
 ### Verification
 
 - Backend: 3 unit tests passed using the MSYS2 Python 3.10.6 interpreter.
@@ -45,8 +66,44 @@ This boundary is intentionally small enough for a fast prototype and includes th
 3. Add algorithm tests using controlled building geometries and known sun directions.
 4. Measure end-to-end request time and confirm the under-three-minute requirement.
 5. Add tests for unavailable UV responses, unavailable route data, invalid times, and no-route cases.
-6. Add README setup instructions, API startup commands, dataset attribution, and a short demonstration workflow.
-7. Create a requirements traceability table mapping the implemented behavior to the PRD acceptance criteria.
+6. Add a usability check with a non-technical user and record the result.
+7. Decide whether shade percentage should become intensity-weighted rather than binary per segment.
+
+### PRD traceability checklist
+
+Status legend: `[x]` implemented and demonstrated, `[~]` partially implemented or not fully verified, `[ ]` not implemented.
+
+#### Functional requirements
+
+- `[x]` **F-01**: Provides route options with shade and sun-exposure information through the API and route drawer. Evidence: live route request and browser route cards.
+- `[x]` **F-02**: Recalculates solar position and shade when travel time changes. Evidence: live noon versus late-afternoon requests produced different shade percentages.
+- `[x]` **F-03**: Represents mixed route segments with separate sun and shade colors. Evidence: route polylines are rendered segment by segment.
+- `[x]` **F-04**: Provides two route alternatives when the local network permits. Evidence: browser displays two route options and both are drawn on the map.
+- `[~]` **F-05**: Backend computes Low/Moderate/High exposure ratings, but the frontend currently emphasizes shaded and sun-exposed percentages rather than displaying the rating explicitly. Add the rating to the route drawer.
+- `[x]` **F-06**: Displays route distance, estimated duration, and exposure percentages together. Evidence: route option cards and selected-route details.
+- `[x]` **F-07**: Requests UV Index at runtime and classifies it as Low through Extreme while keeping it separate from shade. Evidence: live Open-Meteo response and UV context card. A high/very-high test fixture is still needed.
+
+#### Software requirements
+
+- `[x]` **S-01**: Full-screen interactive Leaflet map centered on the Katipunan/ADMU study area.
+- `[x]` **S-02**: Start and destination are selected by clicking the map; coordinate values are hidden from the interface.
+- `[x]` **S-03**: Selected walking routes are drawn on the map.
+- `[x]` **S-04**: Sun-exposed segments use gold and shaded segments use teal levels.
+- `[x]` **S-05**: Travel time input defaults to the current local time and is sent to the backend.
+- `[x]` **S-06**: Multiple routes can be displayed, selected, minimized, and compared.
+- `[~]` **S-07**: The interface is designed for non-technical users, but no formal usability test has been completed.
+
+#### Performance and operating conditions
+
+- `[~]` **P-01**: The local route and raster processing completes in development tests, but no measured end-to-end benchmark has been recorded against the three-minute target.
+- `[x]` **O-01**: The application validates and processes points within the bounded ADMU/Katipunan study area.
+
+#### Constraints
+
+- `[x]` **C-01**: Uses a walking highway graph and does not intentionally route through building interiors. Indoor-specific validation remains a recommended test.
+- `[x]` **C-02**: Does not provide ratings for sidewalk quality, accessibility, traffic safety, cleanliness, or unrelated walkability factors.
+- `[x]` **C-03**: Labels UV as contextual and does not claim to measure thermal comfort, heat stress, or health risk.
+- `[x]` **C-04**: Generates a route from selected points and time without continuous location tracking or dynamic movement updates.
 
 ### Known limitations
 
