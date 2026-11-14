@@ -41,7 +41,7 @@ def fetch_uv_context(latitude: float, longitude: float, travel_time: str) -> dic
         {
             "latitude": latitude,
             "longitude": longitude,
-            "hourly": "uv_index",
+            "hourly": "uv_index,temperature_2m",
             "timezone": "Asia/Manila",
             "past_days": 92,
             "forecast_days": 16,
@@ -53,16 +53,20 @@ def fetch_uv_context(latitude: float, longitude: float, travel_time: str) -> dic
             payload = json.load(response)
         times = payload.get("hourly", {}).get("time", [])
         values = payload.get("hourly", {}).get("uv_index", [])
+        temperatures = payload.get("hourly", {}).get("temperature_2m", [])
         target_string = target.strftime("%Y-%m-%dT%H:%M")
         if target_string not in times:
             return {"status": "unavailable", "message": "UV data is not available for the selected time."}
         value = values[times.index(target_string)]
         if value is None:
             return {"status": "unavailable", "message": "UV data is not available for the selected time."}
+        temperature_index = times.index(target_string)
+        temperature = temperatures[temperature_index] if temperature_index < len(temperatures) else None
         result = {
             "status": "available",
             "index": round(float(value), 1),
             "category": uv_category(float(value)),
+            "temperature_c": round(float(temperature), 1) if temperature is not None else None,
             "source": "Open-Meteo",
         }
     except (OSError, ValueError, KeyError, TypeError, IndexError, json.JSONDecodeError):

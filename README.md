@@ -38,6 +38,12 @@ npm run dev -- --host 127.0.0.1
 
 Open `http://127.0.0.1:5173/` in a browser.
 
+On a desktop-sized browser, the app is displayed inside a virtual phone frame so the mobile layout can be tested without a physical device. On a real phone, the frame is removed and the app uses the full viewport.
+
+### 3. Stop the application
+
+Press `Ctrl+C` in each terminal running the backend and frontend.
+
 ## Use the prototype
 
 1. Click the map once to choose the start point.

@@ -116,6 +116,119 @@ Status legend: `[x]` implemented and demonstrated, `[~]` partially implemented o
 - UV is contextual and retrieved from Open-Meteo at runtime. It is not used to calculate route shade, and the route request still works if the service is unavailable.
 - OpenStreetMap and map-tile services require network access and may rate-limit requests. The application does not continuously track user location.
 
+## PRD comparison and update plan
+
+### Review date
+
+2026-11-14
+
+### Prototype baseline reviewed
+
+The working prototype currently supports:
+
+- A React/Vite full-screen Leaflet map for the bounded Katipunan/ADMU area.
+- Start and destination selection by tapping the map.
+- An editable travel date/time, defaulted to the browser's current local time.
+- A Python API that validates the study area, returns one or two local walking routes, and reports distance and estimated walking duration.
+- Segment-level sun/shade classification using solar position and the local building-height GeoTIFF.
+- Shaded and sun-exposed route percentages, a backend exposure rating, route selection, a legend, dark/light themes, and UV context from Open-Meteo.
+
+Evidence reviewed: `backend/app.py`, `backend/routing.py`, `backend/shade.py`, `backend/uv.py`, `backend/test_app.py`, `frontend/src/main.jsx`, `frontend/src/styles.css`, and `README.md`.
+
+### Requirements already represented in the prototype
+
+- **F-01 to F-04:** Basic walking routes, time-dependent shade analysis, segment geometry, and route alternatives are implemented for the local test area. They still need the PRD's larger acceptance runs (10 pairs/trips and expected-direction checks).
+- **F-05 to F-07:** The backend computes direct-sun percentage, distance, duration, and UV category; the frontend displays sun/shade percentages and UV context. F-05's score is currently represented mainly through shaded percentage and F-07 needs a high/very-high fixture and invariance test.
+- **S-01, S-03, S-05, and S-06:** Map interaction, route drawing, editable travel time, and on-screen route comparison are present.
+- **O-01 and C-01 to C-04:** The bounded study area, walking-only scope, unsupported-claim boundaries, and no continuous tracking are documented. These constraints will need revision only if the location-aware requirements are implemented.
+
+### Required updates, in priority order
+
+#### P0: Complete the core route result before adding stretch features
+
+1. **Make the route score match the PRD wording.**
+   - Keep `sun_exposed_percent` as the canonical F-05 score and make it prominent on every route card.
+   - Continue exposing shade percentage as a separate supporting metric.
+   - Display the backend `rating` explicitly in the route drawer.
+2. **Add sun-exposure minutes (F-08).**
+   - Return sun-exposed distance or a directly derived `sun_minutes` value from the backend using the existing 80 m/min walking speed.
+   - Display the value for every route and the selected route.
+3. **Add shortest-vs-shadier comparison (F-09).**
+   - Define the baseline as the shortest returned walking route.
+   - When a second route exists, show percentage-point difference, minutes-in-sun difference, and extra distance; handle unavailable comparisons without misleading zeroes.
+4. **Expand weather context to temperature and humidity (F-10, F-11).**
+   - Extend the Open-Meteo request and cache to retrieve values for the selected local hour.
+   - Keep all weather values informational and independent from route generation and exposure scoring.
+5. **Make context-data failure explicit but non-blocking (F-12).**
+   - Return `not available` state for UV, temperature, or humidity independently.
+   - Add tests proving route requests still succeed when each context value is unavailable.
+6. **Add API and algorithm verification for the new core metrics.**
+   - Test sun minutes and route comparisons from controlled route data.
+   - Add controlled shadow tests for known building heights, sun elevations, and directions.
+   - Add invalid-time, no-route, unavailable-UV, and response-schema tests.
+
+#### P1: Complete the non-stretch user experience
+
+7. **Support start/destination entry as well as map selection (S-02).**
+   - Add a phone-friendly way to enter or select both points; preserve hidden coordinate values and current map selection behavior.
+   - Decide whether the prototype uses coordinate entry, place search, or a bounded local search list before implementation.
+8. **Improve route visual accessibility (S-04).**
+   - Keep the existing color legend, but add a non-color distinction (pattern, dash, or explicit segment labeling) so sun and shade remain distinguishable in grayscale.
+9. **Add current-position and remaining-route behavior (F-13, F-14).**
+   - Add opt-in geolocation with a position marker and updates no slower than the proposed five-second interval.
+   - Project the position onto the selected route and compute remaining sun percentage, sun minutes, and distance.
+   - Detect the proposed 30 m off-route threshold, ask before rerouting, and preserve the route when declined.
+   - Update the scope/privacy copy and tests because the current prototype explicitly does not track location.
+10. **Add the comfort window (F-15).**
+    - Calculate the selected route at now, +15 minutes, and +30 minutes.
+    - Recommend waiting only when a later score is at least 5 percentage points lower; otherwise recommend walking now.
+    - Use only sun exposure for this recommendation and add 4-point/6-point boundary tests.
+11. **Run the PRD usability and performance checks.**
+    - Benchmark representative route requests and record evidence against the three-minute target.
+    - Test 10 route pairs/trips, three time-of-day cases, mixed segments, and three non-technical users.
+    - Record actual results, not just planned checks.
+
+#### P2: Implement the walkability and covered-section requirements
+
+12. **Add street walkability ratings (S-08, S-09).**
+    - Persist 1-5 ratings by street segment.
+    - Show street averages only after the proposed minimum of three ratings.
+    - Calculate route walkability as a length-weighted average and show rated-route share.
+    - Keep walkability informational and independent from route choice and shade scores.
+13. **Add user-maintained covered sections (S-10, S-11).**
+    - Persist, correct, and remove covered marks against route/street sections.
+    - Treat active covered sections as shaded for sun percentage and sun minutes.
+    - Render covered sections with a distinct style and restore calculated shade when removed.
+    - Decide on the persistence store and conflict behavior before implementation; the current prototype has no persistence layer or accounts.
+
+#### P3: Optional stretch scope
+
+14. **Evaluate MRT/LRT walk-train-walk routing (F-16 to F-19).**
+    - Acquire and document station/line data and shortest rail paths.
+    - Generate qualifying options only when both walks are within 1 km.
+    - Estimate ride and transfer time using documented fixed assumptions.
+    - Shift the second walk's solar time, label it approximate, and show total travel time.
+    - Exclude the rail portion from walking exposure metrics and render it distinctly.
+    - If no qualifying option exists, omit the train option without an error.
+
+### Dependencies and decisions before implementation
+
+- Confirm the weather provider fields and hourly semantics for temperature, humidity, and UV.
+- Confirm building-height GeoTIFF units, source metadata, nodata handling, and accuracy before treating shadow results as validated.
+- Choose a persistence mechanism for ratings and covered sections; this is a new architectural requirement.
+- Decide the place-entry/search approach and whether geolocation is opt-in only.
+- Decide whether the existing binary per-segment shade percentage remains the accepted approximation or becomes intensity-weighted.
+- Treat F-16 to F-19 as stretch work after the core walking experience passes its acceptance tests.
+
+### Suggested implementation sequence
+
+1. Backend metrics, weather context, explicit unavailable states, and focused tests.
+2. Frontend route cards/details for sun score, rating, sun minutes, and route deltas.
+3. Core acceptance/performance/usability verification and documentation of measured evidence.
+4. Point entry, accessible segment styling, comfort window, and opt-in live location.
+5. Persistence-backed walkability and covered sections.
+6. Train routing only if the stretch scope is approved and data feasibility is confirmed.
+
 ## Implementation Plan
 
 ### Objective

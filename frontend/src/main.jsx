@@ -1,7 +1,7 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DomEvent } from "leaflet";
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from "react-leaflet";
+import { CircleMarker, MapContainer, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
@@ -29,15 +29,29 @@ function MapClickHandler({ onMapClick }) {
   return null;
 }
 
-function RouteMap({ start, destination, routes, selectedRouteId, onMapClick, onRouteClick, mapTheme }) {
+function MapViewportController({ location }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (location) {
+      map.flyTo([location.latitude, location.longitude], Math.max(map.getZoom(), 16), { duration: 0.4 });
+    }
+  }, [location, map]);
+
+  return null;
+}
+
+function RouteMap({ start, destination, location, routes, selectedRouteId, onMapClick, onRouteClick, mapTheme }) {
   return (
     <div className={`map-shell ${mapTheme}-map`}>
-      <MapContainer center={MAP_CENTER} zoom={15} minZoom={14} maxZoom={18} className="map">
+      <MapContainer center={MAP_CENTER} zoom={15} minZoom={14} maxZoom={18} zoomControl={false} className="map">
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <MapClickHandler onMapClick={onMapClick} />
+        <MapViewportController location={location} />
+        {location && <CircleMarker center={[location.latitude, location.longitude]} radius={7} pathOptions={{ color: "#ffffff", fillColor: "#2c9bd6", fillOpacity: 1, weight: 3 }} />}
         {start && <CircleMarker center={[start.latitude, start.longitude]} radius={9} pathOptions={{ color: START_COLOR, fillColor: START_COLOR, fillOpacity: 1 }} />}
         {destination && <CircleMarker center={[destination.latitude, destination.longitude]} radius={9} pathOptions={{ color: DESTINATION_COLOR, fillColor: DESTINATION_COLOR, fillOpacity: 1 }} />}
         {routes.flatMap((route) => (route.exposure?.segments || []).map((segment, index) => (
@@ -57,38 +71,82 @@ function RouteMap({ start, destination, routes, selectedRouteId, onMapClick, onR
   );
 }
 
+function formatPoint(point) {
+  return point ? `${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}` : "";
+}
+
+function parsePoint(value) {
+  const parts = value.split(",").map((part) => Number(part.trim()));
+  if (parts.length !== 2 || parts.some((part) => !Number.isFinite(part))) return null;
+  return { latitude: parts[0], longitude: parts[1] };
+}
+
 function App() {
   const [start, setStart] = useState(null);
   const [destination, setDestination] = useState(null);
+  const [startQuery, setStartQuery] = useState("");
+  const [destinationQuery, setDestinationQuery] = useState("");
+  const [location, setLocation] = useState(null);
   const [travelTime, setTravelTime] = useState(localDateTime);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [locationError, setLocationError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [mapTheme, setMapTheme] = useState("dark");
+  const [mapTheme, setMapTheme] = useState("light");
   const [selectedRouteId, setSelectedRouteId] = useState(null);
-  const [plannerMinimized, setPlannerMinimized] = useState(false);
-  const [routesMinimized, setRoutesMinimized] = useState(false);
+  const [activeModal, setActiveModal] = useState(null);
+  const [recentSearches, setRecentSearches] = useState(() => {
+    try {
+      const savedSearches = JSON.parse(localStorage.getItem("shades-recent-searches") || "[]");
+      return Array.isArray(savedSearches) ? savedSearches : [];
+    } catch {
+      return [];
+    }
+  });
 
   function selectPoint({ lat, lng }) {
     const point = { latitude: Number(lat.toFixed(6)), longitude: Number(lng.toFixed(6)) };
     if (!start || destination) {
       setStart(point);
+      setStartQuery(formatPoint(point));
       setDestination(null);
+      setDestinationQuery("");
       setResult(null);
       return;
     }
     setDestination(point);
+    setDestinationQuery(formatPoint(point));
   }
 
   function resetPoints() {
     setStart(null);
     setDestination(null);
+    setStartQuery("");
+    setDestinationQuery("");
     setResult(null);
     setError("");
   }
 
-  async function submitRoute(event) {
-    event.preventDefault();
+  function swapPoints() {
+    setStartQuery(destinationQuery);
+    setDestinationQuery(startQuery);
+    setStart(destination);
+    setDestination(start);
+  }
+
+  function applyPointQueries() {
+    const parsedStart = parsePoint(startQuery);
+    const parsedDestination = parsePoint(destinationQuery);
+    if (!parsedStart || !parsedDestination) {
+      setError("Enter both points as latitude, longitude or tap the map to set them.");
+      return null;
+    }
+    setStart(parsedStart);
+    setDestination(parsedDestination);
+    return { parsedStart, parsedDestination };
+  }
+
+  async function requestRoutes(startPoint, destinationPoint) {
     setLoading(true);
     setError("");
     setResult(null);
@@ -97,12 +155,17 @@ function App() {
       const response = await fetch("http://127.0.0.1:8000/api/routes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start, destination, travel_time: travelTime }),
+        body: JSON.stringify({ start: startPoint, destination: destinationPoint, travel_time: travelTime }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "The route request failed.");
       setResult(body);
       setSelectedRouteId(body.routes[0]?.id || null);
+      const recentSearch = { start: startQuery, destination: destinationQuery };
+      const updatedSearches = [recentSearch, ...recentSearches.filter((item) => item.start !== recentSearch.start || item.destination !== recentSearch.destination)].slice(0, 3);
+      setRecentSearches(updatedSearches);
+      localStorage.setItem("shades-recent-searches", JSON.stringify(updatedSearches));
+      setActiveModal("routes");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -110,11 +173,41 @@ function App() {
     }
   }
 
+  function submitRoute(event) {
+    event.preventDefault();
+    const points = applyPointQueries();
+    if (points) requestRoutes(points.parsedStart, points.parsedDestination);
+  }
+
+  function centerOnLocation() {
+    if (!navigator.geolocation) {
+      setLocationError("Location is not available in this browser.");
+      return;
+    }
+    setLocationError("");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const currentLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        };
+        setLocation(currentLocation);
+        if (!startQuery) {
+          setStart(currentLocation);
+          setStartQuery(formatPoint(currentLocation));
+        }
+      },
+      () => setLocationError("Location access was not granted."),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
+    );
+  }
+
   return (
     <main className={`navigation-shell ${mapTheme}-app`}>
       <RouteMap
         start={start}
         destination={destination}
+        location={location}
         routes={result?.routes || []}
         selectedRouteId={selectedRouteId}
         onMapClick={selectPoint}
@@ -125,52 +218,69 @@ function App() {
       <div className="map-wash" />
       <header className="topbar">
         <div className="brand-lockup"><span className="brand-mark">S</span><span><strong>SHADES</strong><small>Katipunan / ADMU</small></span></div>
-        <button type="button" className="map-theme-button" onClick={() => setMapTheme(mapTheme === "dark" ? "light" : "dark")}>{mapTheme === "dark" ? "Light mode" : "Dark mode"}</button>
+        <div className="topbar-actions">
+          <button type="button" className="map-theme-button" onClick={() => setMapTheme(mapTheme === "dark" ? "light" : "dark")}>{mapTheme === "dark" ? "Light" : "Dark"}</button>
+        </div>
       </header>
 
-      <form onSubmit={submitRoute} className="planner-panel overlay-panel">
-        <div className="panel-header"><div className="panel-kicker">Route planner</div><button type="button" className="panel-toggle" aria-label={plannerMinimized ? "Expand route planner" : "Minimize route planner"} title={plannerMinimized ? "Expand route planner" : "Minimize route planner"} onClick={() => setPlannerMinimized(!plannerMinimized)}>{plannerMinimized ? "+" : "−"}</button></div>
-        {!plannerMinimized && <>
-          <h1>Walk in the shade.</h1>
-          <p className="panel-copy">Choose two points on the map to compare sun exposure.</p>
-          <div className="selection-status">
-            <div><span className="point-dot start-dot" />Start <strong>{start ? "Selected" : "Click the map"}</strong></div>
-            <div><span className="point-dot destination-dot" />Destination <strong>{destination ? "Selected" : "Click the map"}</strong></div>
-          </div>
-          <label>
-            Travel time
-            <input type="datetime-local" value={travelTime} onChange={(event) => setTravelTime(event.target.value)} required />
-          </label>
-          <button type="submit" disabled={loading || !start || !destination}>{loading ? "Calculating..." : "Preview route"}</button>
-          <button type="button" className="secondary-button" onClick={resetPoints}>Reset selection</button>
-          <p className="hint">Click once for start and again for destination. A third click begins a new selection.</p>
-        </>}
-      </form>
+      <button type="button" className="route-search-bar overlay-panel" onClick={() => setActiveModal("planner")} aria-label="Open route search">
+        <span className="route-search-field"><small>From</small><strong>{startQuery || "Choose origin"}</strong></span>
+        <span className="route-search-divider" />
+        <span className="route-search-field"><small>To</small><strong>{destinationQuery || "Choose destination"}</strong></span>
+        <span className="search-submit" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6" /></svg></span>
+      </button>
 
-      <aside className="routes-panel overlay-panel" aria-live="polite">
-        <div className="routes-heading"><div><div className="panel-kicker">Available routes</div><h2>{result ? `${result.routes.length} ways to go` : "Your routes"}</h2></div><div className="routes-heading-actions"><span className="route-count">{result ? "LIVE" : "READY"}</span><button type="button" className="panel-toggle" aria-label={routesMinimized ? "Expand route options" : "Minimize route options"} title={routesMinimized ? "Expand route options" : "Minimize route options"} onClick={() => setRoutesMinimized(!routesMinimized)}>{routesMinimized ? "+" : "−"}</button></div></div>
-        {!routesMinimized && <>
-          {!result && !error && <p className="empty-state">Your route options will appear here.</p>}
+      <div className="map-actions">
+        {result && <button type="button" className="map-action-button result-action" onClick={() => setActiveModal("routes")}>Routes <span>{result.routes.length}</span></button>}
+      </div>
+      <button type="button" className="location-button" aria-label="Center on current location" title="Center on current location" onClick={centerOnLocation}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5.5" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" /></svg>
+      </button>
+
+      {activeModal && <div className="modal-scrim" onClick={() => setActiveModal(null)}>
+        {activeModal === "planner" && <section className="planner-popover" onClick={(event) => event.stopPropagation()}>
+          <div className="planner-location-card overlay-panel">
+            <div className="planner-popover-header"><div className="panel-kicker">Route</div><button type="button" className="close-button" aria-label="Close route details" onClick={() => setActiveModal(null)}>×</button></div>
+            <div className="location-input-row"><span className="location-dot origin-dot" /><label><span>Origin</span><input value={startQuery} onChange={(event) => setStartQuery(event.target.value)} placeholder="Choose origin" aria-label="Origin" /></label><button type="button" className="swap-button" aria-label="Swap origin and destination" onClick={swapPoints}>↕</button></div>
+            <div className="location-input-row"><span className="location-dot destination-dot" /><label><span>Destination</span><input value={destinationQuery} onChange={(event) => setDestinationQuery(event.target.value)} placeholder="Choose destination" aria-label="Destination" /></label></div>
+            {recentSearches.length > 0 && <div className="recent-searches"><span className="panel-kicker">Recent searches</span>{recentSearches.slice(0, 3).map((search, index) => <button type="button" className="recent-search" key={`${search.start}-${search.destination}-${index}`} onClick={() => { setStartQuery(search.start); setDestinationQuery(search.destination); }}><span>{search.start}</span><strong>→</strong><span>{search.destination}</span></button>)}</div>}
+          </div>
+          <div className="planner-details-card overlay-panel">
+            <div className="planner-popover-header"><div className="panel-kicker">When are you going?</div></div>
+            <label className="time-field">Travel time<input type="datetime-local" value={travelTime} onChange={(event) => setTravelTime(event.target.value)} required /></label>
+            <div className="temperature-card"><span>Temperature</span><strong>{result?.uv_context?.temperature_c != null ? `${result.uv_context.temperature_c}°C` : "Not available"}</strong></div>
+            {error && <p className="error">{error}</p>}
+            {locationError && <p className="error">{locationError}</p>}
+            <div className="planner-actions">
+              <button type="button" className="quiet-primary" disabled={loading} onClick={submitRoute}>{loading ? "Calculating..." : "Preview route"}</button>
+              <button type="button" className="quiet-secondary" onClick={resetPoints}>Reset points</button>
+            </div>
+          </div>
+        </section>}
+
+        {activeModal === "routes" && <aside className="modal-sheet routes-sheet overlay-panel" aria-live="polite" onClick={(event) => event.stopPropagation()}>
+          <div className="sheet-handle" />
+          <div className="modal-header"><div><div className="panel-kicker">Available routes</div><h2>{result ? `${result.routes.length} ways to go` : "Your routes"}</h2></div><button type="button" className="close-button" aria-label="Close routes" onClick={() => setActiveModal(null)}>×</button></div>
           {error && <p className="error">{error}</p>}
           {result && <>
-          <p className="result-note">{result.message}</p>
-          <div className="uv-context"><div><span className="panel-kicker">UV context</span><strong>{result.uv_context?.status === "available" ? `UV ${result.uv_context.index}` : "Unavailable"}</strong></div><small>{result.uv_context?.status === "available" ? `${result.uv_context.category} · ${result.uv_context.source}` : result.uv_context?.message}</small><em>Context only, not a shade measurement.</em></div>
-          <div className="route-list">
-            {result.routes.map((route, index) => (
-              <button type="button" className={`route-option ${selectedRouteId === route.id ? "selected" : ""}`} key={route.id} onClick={() => setSelectedRouteId(route.id)}>
-                <span className="route-number">0{index + 1}</span>
-                <span className="route-option-main"><strong>{route.label}</strong><small>{route.distance_m} m · {route.duration_minutes} min</small></span>
-                <span className="route-option-score"><strong>{route.exposure.shaded_percent}%</strong><small>shade</small></span>
-              </button>
-            ))}
-          </div>
-          {selectedRouteId && (() => {
-            const route = result.routes.find((item) => item.id === selectedRouteId);
-            return route ? <div className="route-detail"><span className="panel-kicker">Selected route</span><h3>{route.label}</h3><div className="detail-grid"><div><strong>{route.exposure.shaded_percent}%</strong><small>shaded</small></div><div><strong>{route.exposure.sun_exposed_percent}%</strong><small>sun-exposed</small></div><div><strong>{route.distance_m} m</strong><small>distance</small></div></div></div> : null;
-          })()}
+            <p className="result-note">{result.message}</p>
+            <div className="uv-context"><div><span className="panel-kicker">UV context</span><strong>{result.uv_context?.status === "available" ? `UV ${result.uv_context.index}` : "Unavailable"}</strong></div><small>{result.uv_context?.status === "available" ? `${result.uv_context.category} · ${result.uv_context.source}` : result.uv_context?.message}</small><em>Context only, not a shade measurement.</em></div>
+            <div className="route-list">
+              {result.routes.map((route, index) => (
+                <button type="button" className={`route-option ${selectedRouteId === route.id ? "selected" : ""}`} key={route.id} onClick={() => setSelectedRouteId(route.id)}>
+                  <span className="route-number">0{index + 1}</span>
+                  <span className="route-option-main"><strong>{route.label}</strong><small>{route.distance_m} m · {route.duration_minutes} min</small></span>
+                  <span className="route-option-score"><strong>{route.exposure.shaded_percent}%</strong><small>shade</small></span>
+                </button>
+              ))}
+            </div>
+            {selectedRouteId && (() => {
+              const route = result.routes.find((item) => item.id === selectedRouteId);
+              return route ? <div className="route-detail"><span className="panel-kicker">Selected route</span><h3>{route.label}</h3><div className="detail-grid"><div><strong>{route.exposure.shaded_percent}%</strong><small>shaded</small></div><div><strong>{route.exposure.sun_exposed_percent}%</strong><small>sun-exposed</small></div><div><strong>{route.distance_m} m</strong><small>distance</small></div></div></div> : null;
+            })()}
           </>}
-        </>}
-      </aside>
+        </aside>}
+      </div>}
 
       <div className="map-legend"><span><i className="legend-dot start-dot" />Start</span><span><i className="legend-dot destination-dot" />Destination</span><span><i className="legend-line sun-line" />Sun</span><span className="shade-scale" aria-label="Least to most shaded"><small>Shade</small>{SHADE_COLORS.map((color) => <i key={color} style={{ backgroundColor: color }} />)}</span></div>
     </main>
