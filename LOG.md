@@ -319,3 +319,144 @@ Build a prototype shade-optimized walking route planner for a limited test area 
 ### Completion criteria
 
 The prototype is complete when a user can select valid start and destination points and a travel time within the Quezon City study area, receive at least one walking route with sunlight/shade information, compare available alternatives, see distance and duration, and understand the result without technical knowledge. The final documentation must state the data sources, assumptions, building-height method or fallback, test evidence, performance result, and all known limitations.
+
+## 2026-11-16: Phase 1, core route engine aligned with PRD
+
+### Changes
+
+- Added `backend/osm.py`: one parse of the OSM extract, shared by routing, shade and (later) place search.
+- `backend/shade.py`:
+  - Nodata raster cells are now unknown (NaN), not zero.
+  - OSM building footprints whose raster cells are all 0 m are marked as buildings without height (D-01). In the study raster, 529 of 5,334 OSM footprints have no height and 4,805 have one.
+  - Routes are cut into pieces of about 10 m and labeled `shaded`, `sun`, `unknown` or `covered`. Matching pieces merge into sections, and each section has a reason (F-03, I-01, E-03).
+  - The figures are computed as follows:
+    - `sun_percent` = (sun + unknown) length ÷ total length (F-05).
+    - `sun_minutes` = (sun + unknown) length ÷ 80 m/min (F-08).
+    - `unknown_percent` is reported with each route.
+  - The old Low/Moderate/High rating was removed.
+- `backend/routing.py`:
+  - Routing now uses A* with a straight-line heuristic.
+  - The shadier route uses the cost shaded m + 3 × (sun + unknown) m (F-04). It is returned only if its sun % is lower than the shortest route's. Otherwise a "no shadier alternative" note is returned.
+  - Each edge keeps its OSM way id and an edge key, for ratings and covered marks.
+  - Vehicle `oneway` tags no longer restrict pedestrians; only `oneway:foot` does.
+- `backend/weather.py` replaces `uv.py`:
+  - It returns UV, temperature, humidity and the NWS heat index, each with its own `available` / `not available` state (F-07, F-10, F-11, F-12).
+  - Failed fetches are not cached.
+- `backend/app.py`:
+  - Routes are labeled Shortest and Shadier, and the response includes:
+    - the comparison (F-09)
+    - the comfort window at +0/+15/+30 min, with "wait" only if a later time is at least 5 points lower (F-15)
+    - the assumptions (C-05)
+    - the building-height report
+  - The outside-area and no-route error messages now tell the user what to do (E-01, E-02).
+  - Request logging is disabled (C-04).
+
+### Verification
+
+- `python -m unittest discover -s backend -p 'test_*.py'` → 42 tests, OK (Python 3.10.6). New files: `test_shade.py`, `test_solar.py`, `test_routing.py`, `test_comfort.py` and `test_weather.py`. `test_app.py` was updated to the new response schema.
+- D-02: `solar_position` matches an independent implementation of the NOAA spreadsheet algorithm within 1° at 09:00, 12:00 and 15:00 on 4 dates. This is not compared against the NOAA website directly.
+- A* gives the same path cost as Dijkstra on 10 sampled pairs, for both the distance cost and the shade cost.
+- Smoke run with ADMU (14.6407, 121.0748) → (14.6378, 121.0776) on 2026-10-15:
+
+  | Time  | Shortest sun % | Shadier sun % | Extra distance | Request time |
+  | ----- | -------------- | ------------- | -------------- | ------------ |
+  | 09:00 | 86.3           | 72.1          | 13.7 m         | 0.12 s or less |
+  | 12:00 | 98.0           | 84.4          | 13.7 m         | 0.12 s or less |
+  | 15:00 | 79.1           | 64.0          | 39.5 m         | 0.12 s or less |
+
+  Request time excludes the weather fetch. The app takes about 2.3 s to start.
+
+## 2026-11-16: Phases 2–4, reference UI, search and live walk, ratings and covered marks
+
+### Changes
+
+- **Frontend rebuilt to match `reference/home page.png`.** `main.jsx` was split into `App.jsx`, `components/` and `lib/`.
+  - **Top:** a white location card ("Your Location" in blue, "Destination" in orange-brown, a dotted connector and a swap button) and a "Leave Now" pill. The pill shows the temperature and heat index in red, or "not available". The dark theme was removed.
+  - **Results:** a collapsible bottom sheet showing:
+    - side-by-side Shortest and Shadier cards: sun %, minutes in sun, distance, walk time, unknown % and walkability (S-06)
+    - the comparison (F-09)
+    - the E-03 note
+    - the comfort window (F-15)
+    - UV and humidity, labeled as context
+    - the assumptions (C-05)
+  - **Map:** each label is drawn with a different pattern (sun solid, shaded dotted, unknown dashed with "?" markers, covered double line), with a legend (S-04). Tapping a section shows its reason (I-01).
+  - **Default time fixed:** it now uses local time and is sent with the device's UTC offset. Before, the default was UTC read as Manila time, which put it 8 h off.
+- **Search (S-02):** `GET /api/places` searches 784 named places from the OSM extract, inside the study area only.
+- **Weather (F-10):** `GET /api/weather` provides the header readings before any route is requested.
+- **Location (S-12, E-04):** the current location becomes the start when permission is granted, accuracy is ≤ 50 m and the user is inside the area. Otherwise a message is shown and the start is set manually.
+- **Live walk (F-13, F-14, C-06):**
+  - Uses `watchPosition` plus a 5 s poll.
+  - Remaining figures are computed client-side from the sections ahead.
+  - Leaving the route by more than 30 m brings up a reroute prompt, and the route changes only if the user accepts.
+  - Tracking pauses while the page is hidden.
+- **Offline:** a "No connection" banner appears on `offline` events or failed fetches (O-03).
+- **SQLite storage** in `data/shades.db`:
+  - Street ratings (1–5) and covered marks are stored per street section, with the endpoints `/api/streets/nearest`, `/api/streets/{way}/ratings` and `/api/covered` (S-08, S-10, D-03).
+  - Streets with fewer than 3 ratings show "not enough ratings".
+  - Route walkability is a length-weighted average labeled "based on user ratings". It is computed after the routes are chosen (S-09, C-02).
+  - Covered sections count as shaded in the figures and in the shadier-route cost (S-11).
+- **UI:** "Rate a street or mark a covered walkway" mode in the sheet.
+- **Repo setup:**
+  - Added `.gitignore` for `__pycache__/`, `node_modules/` and `data/*.db`. Files already tracked stay tracked.
+  - Added `.claude/launch.json`, with preview ports 8010 and 5180.
+  - Added `SHADES_API_PORT` and `SHADES_DB` overrides.
+- Added `backend/acceptance.py`, which produces the scripted PRD evidence.
+
+### Verification
+
+- **Backend tests:** `python -m unittest discover -s backend -p 'test_*.py'` → 58 tests, OK. New: `test_places.py` and `test_storage.py`. After this run, one covered-mark assertion was made unconditional, and `test_storage` was rerun on its own (10 tests, OK).
+- **Frontend tests (before the Phase 4 UI):** `npx vitest run` → 9 tests, OK (`geo.test.js` and `time.test.js`), and `npm run build` OK.
+- **Browser preview at 360×740, with simulated location:**
+  - The start was set from the simulated location, and a search for "Rizal Library" selected the destination.
+  - Two route cards appeared (Shortest 53% / Shadier 48% at 3:28 PM), with the comparison and the comfort window.
+  - Tapping a section showed its reason.
+  - Live walk: at the start the remaining figures equal the full route (548 m, 48%, 3 min). There is no prompt 10 m off the route.
+  - The off-route prompt appeared about 35 m from the route. "Keep this route" kept it. "Recalculate" rerouted from the position (615 m / 636 m).
+  - The offline banner showed and then hid.
+  - In street mode, tapping the map selected a 22 m footway section, which showed "Not enough ratings yet (0 of 3 needed)".
+- **Not yet run after the Phase 4 frontend changes:** the full backend suite, vitest, `npm run build`, `backend/acceptance.py`, and the browser check of submitting ratings and toggling a covered mark. During this session the command safety check kept failing, so these commands could not run.
+- **Pending manual checks** (people, a phone or a site visit): S-07 usability with 3 users, A-01 field check of 30 points, F-13/F-14/C-06 on a real phone, O-02 on a real phone, O-03 with the network actually off, and P-01 over a mobile connection.
+
+## 2026-11-16: Verification after Phase 4, and a C-01 fix
+
+### C-01 fix
+
+The first acceptance run found 12 of 30 requests with route pieces inside OSM building footprints, 359 m in total. They came from three kinds of footprint:
+- open roofs (`building=roof`)
+- raised structures (`layer=1`)
+- some real ground-level buildings, such as a 3-storey retail building and houses
+
+`WalkingGraph.from_osm` now leaves out walking edges whose 25/50/75% points fall inside an enclosed ground-level building. That excludes 10 edges. These are still walkable:
+- open roofs, canopies and carports
+- buildings with `layer >= 1` or a minimum level above ground
+- ways tagged `tunnel=building_passage`
+
+Ways tagged `indoor=yes` are excluded entirely. Two new tests in `test_routing.py` cover the C-01 rule.
+
+### Verification (all run in this session)
+
+- **Backend tests:** `python -m unittest discover -s backend -p 'test_*.py'` → 60 tests, OK.
+- **Frontend:** `npm test` (vitest) → 9 tests, OK. `npm run build` → OK.
+- **Acceptance:** `python backend/acceptance.py` after the C-01 fix. It used 10 seeded pairs 300–1,500 m apart at 09:00, 12:00 and 15:00, with live Open-Meteo weather. Changing the graph changed the sampled pairs.
+
+  | Requirement | Result |
+  | --- | --- |
+  | P-01 | 30 of 30 requests in 10 s or less (median 2.04 s, max 2.42 s). Measured in-process, without HTTP or phone network time; most of the time is the weather fetch. |
+  | F-01 | 30 of 30 returned routes with sun figures. |
+  | F-02 | 9 of 10 trips differ across the three times. |
+  | F-03 | 27 of 30 have both shaded and sunny sections. |
+  | F-04 | 14 of 30 returned a shadier alternative. The rest got the "no shadier alternative" note: no path with a lower sun % was found under the 3× sun weighting. |
+  | C-01 | 0 of 30 pass through an enclosed ground-level building. |
+  | D-01 | 4,805 of 5,334 OSM footprints have height data, and 529 are flagged unknown. |
+
+- **Browser check at 360×740 against a separate preview database (`data/preview.db`):**
+  - Street mode: tapping the map selected a 22 m footway section showing "Not enough ratings yet (0 of 3 needed)".
+  - Rating it 4, 5 and 3 changed it to "4.0 / 5 from 3 ratings".
+  - "Mark this section as covered" saved one covered section, which was drawn in purple on the map.
+  - Removing the mark left 0 covered sections.
+  - All API requests on a clean page load returned 200.
+
+### Still open
+
+- **F-04:** fewer than half of the sampled trips get a shadier alternative. Raising the sun weight or adding a distinct non-shadier alternative would change the routing design, so it is left as a decision.
+- **Pending manual checks:** S-07 usability with 3 users, A-01 field check of 30 points, F-13/F-14/C-06 and O-02 on a real phone, O-03 with the network actually off, and P-01 over a mobile connection.

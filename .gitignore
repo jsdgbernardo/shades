@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Local user data (ratings and covered marks)
+data/*.db
+data/*.db-journal

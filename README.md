@@ -1,14 +1,14 @@
 # Shades
 
-Shade-optimized walking route prototype for the Katipunan and Ateneo de Manila University area.
+Shade-aware walking routes for the Katipunan and Ateneo de Manila University area. For a trip and a departure time, Shades shows the shortest route and a shadier alternative. For each route it shows how much is in direct sun, the minutes spent in the sun, the distance and the walking time.
 
 ## Prerequisites
 
-- Python 3.10 or newer
-- Node.js 20 or newer and npm
-- Internet access for OpenStreetMap map tiles and live Open-Meteo UV context
+- Python 3.10 or newer. The backend uses only the standard library, so there is nothing to `pip install`.
+- Node.js 20 or newer and npm.
+- Internet access for the OpenStreetMap map tiles and the live Open-Meteo weather readings.
 
-The application does not require an API key. The walking network and building-height raster used by the prototype are already stored in `datasets/`.
+The application does not require an API key. The walking network and the building-height raster are already stored in `datasets/`.
 
 ## Launch the application
 
@@ -21,6 +21,8 @@ python backend\app.py
 ```
 
 The API runs at `http://127.0.0.1:8000`.
+- Set `SHADES_API_PORT` to use another port.
+- Set `SHADES_DB` to store ratings and covered marks somewhere other than `data/shades.db`.
 
 On Windows, if `python` opens the Microsoft Store alias, run the command with the Python interpreter selected in VS Code instead. For the development environment used for this prototype:
 
@@ -36,7 +38,7 @@ npm install
 npm run dev -- --host 127.0.0.1
 ```
 
-Open `http://127.0.0.1:5173/` in a browser.
+Open `http://127.0.0.1:5173/` in a browser. If the API runs on another port, start Vite with `VITE_API_URL` set, for example `$env:VITE_API_URL='http://127.0.0.1:8010'`.
 
 On a desktop-sized browser, the app is displayed inside a virtual phone frame so the mobile layout can be tested without a physical device. On a real phone, the frame is removed and the app uses the full viewport.
 
@@ -46,33 +48,66 @@ Press `Ctrl+C` in each terminal running the backend and frontend.
 
 ## Use the prototype
 
-1. Click the map once to choose the start point.
-2. Click the map again to choose the destination.
-3. Select a travel time and click **Preview route**.
-4. Compare the two generated walking routes in the route drawer.
-5. Click a route on the map or in the drawer to view its details.
-6. Use **Reset selection** to choose new points.
+1. Allow location access to use your current position as the start point. Alternatively, type a place name in **Your Location** or tap the field and then the map.
+2. Type a place name in **Destination** (for example "Rizal Library") or tap the map.
+3. **Leave Now** uses the current time. Tap it to choose another time.
+4. Compare the **Shortest** and **Shadier** route cards. Each shows the share of the route in direct sun, the minutes in the sun, the distance and the walking time.
+5. Tap a coloured section of the route to see why it is labelled sunny, shaded, covered or shade unknown.
+6. Open **Best time to leave, live walk and details** to see:
+   - the sun share now, in 15 minutes and in 30 minutes
+   - **Start walk**, which follows your position and updates the figures for the rest of the route
+7. Use **Rate a street or mark a covered walkway** to rate a street 1–5, or to mark or unmark a section as covered.
 
-The map theme button changes the entire application between dark and light mode.
+The temperature and heat index in the top bar are weather readings for context only. They never change routes or scores.
+
+### Testing location without a phone
+
+In development, open `http://127.0.0.1:5173/?simulate-location`. Then use the browser console:
+- `window.__shadesSetLocation(14.6407, 121.0748, 8)` sets the position (latitude, longitude, accuracy in metres).
+- `window.__shadesDenyLocation()` simulates refused location permission.
+
+## API
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/routes` | Takes `{start, destination, travel_time}` and returns the routes, sections, comparison, comfort window, weather and walkability. |
+| `GET /api/weather?time=` | UV, temperature, humidity and heat index for the study area. Each reading is either available or not available. |
+| `GET /api/places?q=` | Searches named places in the local OSM extract. |
+| `GET /api/streets/nearest?lat=&lon=` | The street section nearest to a tapped point, with its walkability. |
+| `POST /api/streets/{way_id}/ratings` | Takes `{rating: 1..5}`. |
+| `GET /api/covered` | Lists the sections that users have marked as covered. |
+| `PUT` / `DELETE /api/covered/{edge_key}` | Marks or unmarks a section as covered. |
 
 ## Verification commands
 
-Run backend tests from the repository root:
+Backend tests (from the repository root):
 
 ```powershell
 python -m unittest discover -s backend -p 'test_*.py' -v
 ```
 
-Build the frontend:
+Frontend tests and build:
 
 ```powershell
 Set-Location frontend
+npm test
 npm run build
+```
+
+Acceptance evidence, which uses live weather and prints a Markdown report:
+
+```powershell
+python backend\acceptance.py
 ```
 
 ## Data and scope
 
 - The walking network is a bounded OpenStreetMap extract documented in `datasets/README.md`.
 - Building heights come from the local 2026 GeoTIFF in `datasets/building-heights/`.
-- UV Index is requested at runtime from Open-Meteo and is shown only as contextual information, not as a shade measurement.
-- The prototype is limited to the ADMU/Katipunan bounding box and does not provide continuous location tracking, indoor routing, general walkability ratings, thermal comfort, heat-stress, or health-risk predictions.
+  - OSM building footprints that have no height in the raster are flagged as **shade unknown**.
+  - Shade-unknown sections count as direct sun.
+- Shade comes from buildings only. Trees, awnings and clouds are not modelled; a clear sky is assumed.
+- Covered walkways count as shaded only where users have marked them.
+- Walkability scores come only from user ratings. They never affect routing.
+- Location is used only while the app is open: to set the start point, show your position and detect when you leave the route. It is never stored or logged.
+- The prototype is limited to the ADMU/Katipunan bounding box. It does not provide indoor routing, thermal comfort, heat-stress or health-risk predictions. The MRT/LRT train option (PRD F-16–F-19) is not built.
