@@ -19,6 +19,8 @@ const GPS_OPTIONS = { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 }
 
 export default function App() {
   const mapRef = useRef(null);
+  const phoneRef = useRef(null);
+  const topControlsRef = useRef(null);
   const [start, setStart] = useState(null);
   const [destination, setDestination] = useState(null);
   const [activeField, setActiveField] = useState("destination");
@@ -51,6 +53,22 @@ export default function App() {
     () => toOffsetIso(leaveNow ? toInputValue(new Date()) : travelInput),
     [leaveNow, travelInput],
   );
+
+  // Keep the bottom sheet below the top cards at every window size.
+  useEffect(() => {
+    const phone = phoneRef.current;
+    const top = topControlsRef.current;
+    if (!phone || !top || typeof ResizeObserver === "undefined") return undefined;
+    const update = () => {
+      const clearance = top.getBoundingClientRect().bottom - phone.getBoundingClientRect().top + 10;
+      phone.style.setProperty("--top-clearance", `${Math.ceil(clearance)}px`);
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(top);
+    observer.observe(phone);
+    update();
+    return () => observer.disconnect();
+  }, []);
 
   // Connection state (PRD O-03).
   useEffect(() => {
@@ -251,7 +269,7 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="phone">
+      <section className="phone" ref={phoneRef}>
         <MapView
           ref={mapRef}
           start={start}
@@ -266,7 +284,7 @@ export default function App() {
           onSelectRoute={setSelectedId}
         />
         {!online && <div className="offline-banner" role="alert">No connection. Routes and weather need the internet.</div>}
-        <div className="top-controls">
+        <div className="top-controls" ref={topControlsRef}>
           <LocationCard
             start={start}
             destination={destination}

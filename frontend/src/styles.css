@@ -33,8 +33,9 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .app-shell { min-height: 100%; display: grid; place-items: center; padding: 24px; }
 .phone {
   position: relative;
+  /* Phone proportions when the window is tall enough; never narrower than 360px (PRD O-02). */
   height: min(900px, calc(100vh - 48px));
-  aspect-ratio: 430 / 915;
+  width: clamp(360px, calc((100vh - 48px) * 430 / 915), 430px);
   overflow: hidden;
   border-radius: 46px;
   background: #e9e5dc;
@@ -46,7 +47,15 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .leaflet-container { font-family: inherit; }
 
 /* Top: location card and time pill */
-.top-controls { position: absolute; z-index: 700; top: clamp(16px, 9%, 84px); left: 16px; right: 16px; display: grid; gap: 10px; }
+.phone {
+  /* Top cards: location card (~100px) + gap + time pill (~42px). The bottom stack stays below them. */
+  /* At least 44px so the cards clear the frame's 46px rounded corners on short windows. */
+  --top-offset: clamp(44px, 9%, 84px);
+  /* Fallback only; App measures the real bottom of the top cards and overrides this. */
+  --top-clearance: calc(var(--top-offset) + 162px);
+  --frame-bottom: 30px; /* keeps sheet content clear of the rounded phone corners */
+}
+.top-controls { position: absolute; z-index: 700; top: var(--top-offset); left: 16px; right: 16px; display: grid; gap: 10px; }
 .location-card { position: relative; display: flex; align-items: center; padding: 6px 8px 6px 16px; border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); }
 .location-card__rows { position: relative; flex: 1; min-width: 0; }
 .location-card__connector { position: absolute; left: 8px; top: 32px; height: 22px; border-left: 2px dotted #9aa0a6; pointer-events: none; }
@@ -101,7 +110,7 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .section-popup__label--covered { color: var(--purple); }
 
 /* Bottom: legend, locate button and route sheet */
-.bottom-stack { position: absolute; z-index: 600; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; pointer-events: none; }
+.bottom-stack { position: absolute; z-index: 600; left: 0; right: 0; bottom: 0; max-height: calc(100% - var(--top-clearance)); display: flex; flex-direction: column; pointer-events: none; }
 .bottom-stack > * { pointer-events: auto; }
 .bottom-stack__row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; padding: 0 16px 12px; pointer-events: none; }
 .bottom-stack__row > * { pointer-events: auto; }
@@ -110,9 +119,9 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .legend { display: grid; grid-template-columns: auto auto; gap: 4px 12px; margin: 0; padding: 8px 10px; list-style: none; border-radius: 12px; background: rgb(255 255 255 / 94%); box-shadow: var(--shadow); font-size: 12px; font-weight: 500; }
 .legend li { display: flex; align-items: center; gap: 6px; }
 
-.route-sheet { max-height: 52%; overflow: auto; padding: 8px 16px calc(16px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--card); box-shadow: 0 -4px 20px rgb(32 33 36 / 14%); overscroll-behavior: contain; }
-.route-sheet--expanded { max-height: 62%; }
-.bottom-stack:has(.route-sheet--expanded) { max-height: 74%; }
+.route-sheet { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: 8px 20px var(--frame-bottom); border-radius: 22px 22px 0 0; background: var(--card); box-shadow: 0 -4px 20px rgb(32 33 36 / 14%); overscroll-behavior: contain; scrollbar-width: none; }
+.route-sheet::-webkit-scrollbar { display: none; }
+.bottom-stack__row { flex: none; }
 .sheet-handle { display: block; width: 64px; height: 20px; margin: -4px auto 4px; padding: 0; border: 0; background: transparent; }
 .sheet-handle::after { content: ""; display: block; width: 36px; height: 4px; margin: 0 auto; border-radius: 4px; background: #d6d6d3; }
 .more-button { width: 100%; min-height: 42px; margin-top: 10px; border: 1px solid var(--line); border-radius: 12px; color: var(--brown); background: var(--card); font-size: 14px; font-weight: 600; }
@@ -186,8 +195,9 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 
 @media (max-width: 520px) {
   .app-shell { display: block; padding: 0; }
-  .phone { width: 100vw; height: 100vh; height: 100dvh; aspect-ratio: auto; border-radius: 0; box-shadow: none; }
-  .top-controls { top: calc(12px + env(safe-area-inset-top)); left: 12px; right: 12px; }
+  .phone { width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; box-shadow: none; --top-offset: calc(12px + env(safe-area-inset-top)); --frame-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .top-controls { left: 12px; right: 12px; }
+  .route-sheet { padding-left: 16px; padding-right: 16px; }
   .bottom-stack__row { padding: 0 12px 10px; }
 }
 
