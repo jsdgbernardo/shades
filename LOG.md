@@ -35,7 +35,7 @@ The current prototype estimates shade as follows:
 
 1. The selected walking route is divided into consecutive route segments. Each segment is represented by its midpoint for shade analysis.
 2. The backend calculates the sun's elevation and azimuth from the selected local date/time and the route's geographic position.
-3. The 2026 building-height GeoTIFF is loaded into memory. Its WGS84 coordinates are converted into raster rows and columns, and non-finite or extreme nodata values are treated as zero height.
+3. The 2026 building-height GeoTIFF is loaded into memory. Its WGS84 coordinates are converted into raster rows and columns, and non-finite or extreme nodata values are currently treated as zero height. This does not meet PRD D-01/E-03: cells without height data must be flagged as "shade unknown" and counted as direct sun, never as zero height.
 4. From each segment midpoint, the algorithm samples the direction toward the sun every 2 meters, from 2 meters out to 200 meters.
 5. At each sample, the building height is compared with the line-of-sight clearance:
 
@@ -64,7 +64,7 @@ Therefore, any detected obstruction makes the whole tested segment count as shad
 1. Validate shade estimates against several known Katipunan/ADMU streets and selected times.
 2. Confirm the building-height GeoTIFF units, source metadata, nodata meaning, and accuracy.
 3. Add algorithm tests using controlled building geometries and known sun directions.
-4. Measure end-to-end request time and confirm the under-three-minute requirement.
+4. Measure end-to-end request time and confirm the PRD P-01 target (at least 18 of 20 requests in 10 seconds or less).
 5. Add tests for unavailable UV responses, unavailable route data, invalid times, and no-route cases.
 6. Add a usability check with a non-technical user and record the result.
 7. Decide whether shade percentage should become intensity-weighted rather than binary per segment.
@@ -79,31 +79,31 @@ Status legend: `[x]` implemented and demonstrated, `[~]` partially implemented o
 - `[x]` **F-02**: Recalculates solar position and shade when travel time changes. Evidence: live noon versus late-afternoon requests produced different shade percentages.
 - `[x]` **F-03**: Represents mixed route segments with separate sun and shade colors. Evidence: route polylines are rendered segment by segment.
 - `[x]` **F-04**: Provides two route alternatives when the local network permits. Evidence: browser displays two route options and both are drawn on the map.
-- `[~]` **F-05**: Backend computes Low/Moderate/High exposure ratings, but the frontend currently emphasizes shaded and sun-exposed percentages rather than displaying the rating explicitly. Add the rating to the route drawer.
+- `[~]` **F-05**: The PRD score is the percentage of route length in direct sun. The backend computes `sun_exposed_percent`, but the frontend emphasizes shaded percentage; make the sun-exposure percentage the displayed score on every route.
 - `[x]` **F-06**: Displays route distance, estimated duration, and exposure percentages together. Evidence: route option cards and selected-route details.
 - `[x]` **F-07**: Requests UV Index at runtime and classifies it as Low through Extreme while keeping it separate from shade. Evidence: live Open-Meteo response and UV context card. A high/very-high test fixture is still needed.
 
 #### Software requirements
 
 - `[x]` **S-01**: Full-screen interactive Leaflet map centered on the Katipunan/ADMU study area.
-- `[x]` **S-02**: Start and destination are selected by clicking the map; coordinate values are hidden from the interface.
+- `[~]` **S-02**: Start and destination are selected by clicking the map; coordinate values are hidden from the interface. Entry by search is not implemented.
 - `[x]` **S-03**: Selected walking routes are drawn on the map.
-- `[x]` **S-04**: Sun-exposed segments use gold and shaded segments use teal levels.
+- `[~]` **S-04**: Sun-exposed segments use gold and shaded segments use teal levels with a legend. The PRD also requires a non-color distinction (pattern), which is not implemented.
 - `[x]` **S-05**: Travel time input defaults to the current local time and is sent to the backend.
 - `[x]` **S-06**: Multiple routes can be displayed, selected, minimized, and compared.
 - `[~]` **S-07**: The interface is designed for non-technical users, but no formal usability test has been completed.
 
 #### Performance and operating conditions
 
-- `[~]` **P-01**: The local route and raster processing completes in development tests, but no measured end-to-end benchmark has been recorded against the three-minute target.
+- `[~]` **P-01**: The local route and raster processing completes in development tests, but no measured end-to-end benchmark has been recorded against the 10-second target.
 - `[x]` **O-01**: The application validates and processes points within the bounded ADMU/Katipunan study area.
 
 #### Constraints
 
 - `[x]` **C-01**: Uses a walking highway graph and does not intentionally route through building interiors. Indoor-specific validation remains a recommended test.
-- `[x]` **C-02**: Does not provide ratings for sidewalk quality, accessibility, traffic safety, cleanliness, or unrelated walkability factors.
+- `[ ]` **C-02**: Walkability must come only from user ratings (S-08, S-09), be labeled as such, and never affect routing. User ratings are not implemented yet.
 - `[x]` **C-03**: Labels UV as contextual and does not claim to measure thermal comfort, heat stress, or health risk.
-- `[x]` **C-04**: Generates a route from selected points and time without continuous location tracking or dynamic movement updates.
+- `[~]` **C-04**: The prototype does not use device location yet, so nothing is stored. When location (S-12, F-13) is added, it must be used only for the start point, position display and off-route detection, and never stored, logged or shared.
 
 ### Known limitations
 
@@ -140,7 +140,7 @@ Evidence reviewed: `backend/app.py`, `backend/routing.py`, `backend/shade.py`, `
 - **F-01 to F-04:** Basic walking routes, time-dependent shade analysis, segment geometry, and route alternatives are implemented for the local test area. They still need the PRD's larger acceptance runs (10 pairs/trips and expected-direction checks).
 - **F-05 to F-07:** The backend computes direct-sun percentage, distance, duration, and UV category; the frontend displays sun/shade percentages and UV context. F-05's score is currently represented mainly through shaded percentage and F-07 needs a high/very-high fixture and invariance test.
 - **S-01, S-03, S-05, and S-06:** Map interaction, route drawing, editable travel time, and on-screen route comparison are present.
-- **O-01 and C-01 to C-04:** The bounded study area, walking-only scope, unsupported-claim boundaries, and no continuous tracking are documented. These constraints will need revision only if the location-aware requirements are implemented.
+- **O-01, C-01 and C-03:** The bounded study area, walking-only scope, and unsupported-claim boundaries are documented. C-02 and C-04 depend on features not yet built (user ratings, device location).
 
 ### Required updates, in priority order
 
@@ -156,11 +156,12 @@ Evidence reviewed: `backend/app.py`, `backend/routing.py`, `backend/shade.py`, `
 3. **Add shortest-vs-shadier comparison (F-09).**
    - Define the baseline as the shortest returned walking route.
    - When a second route exists, show percentage-point difference, minutes-in-sun difference, and extra distance; handle unavailable comparisons without misleading zeroes.
-4. **Expand weather context to temperature and humidity (F-10, F-11).**
+4. **Expand weather context to temperature, heat index and humidity (F-10, F-11).**
    - Extend the Open-Meteo request and cache to retrieve values for the selected local hour.
+   - Show the plain air temperature and the heat index as two separate labeled readings (project decision 2026-11-16). The heat index is a weather reading for context only, not a comfort or heat-stress assessment (C-03).
    - Keep all weather values informational and independent from route generation and exposure scoring.
 5. **Make context-data failure explicit but non-blocking (F-12).**
-   - Return `not available` state for UV, temperature, or humidity independently.
+   - Return `not available` state for UV, temperature, heat index, or humidity independently.
    - Add tests proving route requests still succeed when each context value is unavailable.
 6. **Add API and algorithm verification for the new core metrics.**
    - Test sun minutes and route comparisons from controlled route data.
@@ -184,7 +185,7 @@ Evidence reviewed: `backend/app.py`, `backend/routing.py`, `backend/shade.py`, `
     - Recommend waiting only when a later score is at least 5 percentage points lower; otherwise recommend walking now.
     - Use only sun exposure for this recommendation and add 4-point/6-point boundary tests.
 11. **Run the PRD usability and performance checks.**
-    - Benchmark representative route requests and record evidence against the three-minute target.
+    - Benchmark representative route requests and record evidence against the P-01 10-second target.
     - Test 10 route pairs/trips, three time-of-day cases, mixed segments, and three non-technical users.
     - Record actual results, not just planned checks.
 
@@ -238,11 +239,11 @@ Build a prototype shade-optimized walking route planner for a limited test area 
 ### Scope and guardrails
 
 - Focus on outdoor direct sunlight exposure only.
-- Do not provide indoor routing, general walkability ratings, thermal-comfort estimates, heat-stress predictions, health-risk claims, or continuous location tracking.
+- Do not provide indoor routing, walkability scores from anything other than user ratings, thermal-comfort estimates, heat-stress predictions, health-risk claims, or background location tracking. Location is used only while the app is open and is never stored.
 - Limit processing and testing to a defined Quezon City study area.
 - Use the current time as the default travel time.
 - Treat UV Index as contextual information, not as a direct shade measurement.
-- Keep the processing target below three minutes for a valid route request.
+- Return results for a valid route request in 10 seconds or less (PRD P-01).
 
 ### Proposed architecture
 
@@ -264,13 +265,13 @@ Build a prototype shade-optimized walking route planner for a limited test area 
 	- Select and document a small Quezon City study area and coordinate reference systems.
 	- Acquire and inspect OpenStreetMap walking-network data, building footprints, building heights, and available PAGASA or other relevant UV/weather data.
 	- Record source, date, coverage, resolution, missing values, licensing/attribution requirements, and preprocessing steps.
-	- Make building-height availability an early decision gate. If reliable heights are unavailable, use a clearly documented prototype fallback such as a fixed/default height or footprint-only approximation and report its limitations.
+	- Make building-height availability an early decision gate. Where heights are unavailable, label the affected sections "shade unknown" and count them as direct sun (PRD E-03); never substitute a default or zero height.
 
 ### Implementation sequence
 
 #### Phase 1: Requirements, data, and feasibility
 
-- Convert the PRD requirements into a traceability checklist for F-01 to F-07, S-01 to S-07, P-01, O-01, and C-01 to C-04.
+- Convert the PRD requirements into a traceability checklist covering every requirement ID in the current `PRD.md`.
 - Define the study-area boundary and representative start/destination test cases.
 - Verify that the selected datasets cover the area and can support routing, building obstruction, and time-dependent sun calculations.
 - Create a small reproducible preprocessing workflow for the road network and building data.
@@ -284,7 +285,7 @@ Build a prototype shade-optimized walking route planner for a limited test area 
 - Implement sun-position calculation for the requested local date and time.
 - Implement route sampling and building-shadow classification for each segment.
 - Implement route metrics and a stable exposure score/rating with explicit assumptions.
-- Add structured error responses and a request-time measurement for the under-three-minute target.
+- Add structured error responses and a request-time measurement for the 10-second target.
 
 #### Phase 3: Frontend and integration
 
@@ -301,7 +302,7 @@ Build a prototype shade-optimized walking route planner for a limited test area 
 - Confirm that routes show mixed shaded and exposed segments where the data supports them.
 - Confirm that at least two alternatives can be displayed and compared for suitable test cases.
 - Test default current time, invalid inputs, points outside the study area, unavailable routes, and missing UV/building-height data.
-- Benchmark representative requests and keep normal processing below three minutes.
+- Benchmark representative requests and keep them at 10 seconds or less.
 - Perform visual and usability checks for map readability and non-technical interpretation.
 - Document known accuracy limitations, dataset gaps, assumptions, and unsupported claims.
 
