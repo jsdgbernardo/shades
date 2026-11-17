@@ -100,7 +100,8 @@ def comfort_window(geometry: list[list[float]], covered_flags: list[bool], trave
         when = shift_time(travel_time, offset)
         model = ExposureModel(HEIGHT_RASTER, when, STUDY_CENTER[0], STUDY_CENTER[1])
         exposure = analyze_route(geometry, when, HEIGHT_RASTER, covered_flags, model)
-        times.append({"offset_minutes": offset, "time": when, "sun_percent": exposure["sun_percent"]})
+        # Full exposure per time so the app can draw the route's sun/shade for that time.
+        times.append({"offset_minutes": offset, "time": when, "sun_percent": exposure["sun_percent"], "exposure": exposure})
     return {"times": times, **recommend(times)}
 
 

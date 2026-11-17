@@ -54,6 +54,7 @@ class WalkingGraph:
         self.edges = edges
         self.edge_ways = edge_ways or {}
         self.way_names = way_names or {}
+        self.named_ways: set[int] = set()
         self.excluded_indoor_edges = 0
 
     @classmethod
@@ -75,6 +76,7 @@ class WalkingGraph:
         edges: dict[int, dict[int, float]] = {}
         edge_ways: dict[tuple[int, int], int] = {}
         way_names: dict[int, str] = {}
+        named_ways: set[int] = set()
 
         def add(first: int, second: int, distance: float, way_id: int) -> None:
             if distance < edges.setdefault(first, {}).get(second, math.inf):
@@ -89,6 +91,8 @@ class WalkingGraph:
                 continue
             passage = tags.get("tunnel") == "building_passage"
             way_names[way.way_id] = tags.get("name") or tags.get("highway", "street").replace("_", " ").capitalize()
+            if tags.get("name"):
+                named_ways.add(way.way_id)
             # A vehicle "oneway" tag does not restrict pedestrians; only oneway:foot does.
             oneway = tags.get("oneway:foot") in {"yes", "1", "true", "-1"}
             reverse = tags.get("oneway:foot") == "-1"
@@ -106,6 +110,7 @@ class WalkingGraph:
                     add(second, first, distance, way.way_id)
         graph = cls(coordinates, edges, edge_ways, way_names)
         graph.excluded_indoor_edges = excluded
+        graph.named_ways = named_ways
         return graph
 
     def nearest_node(self, point: tuple[float, float]) -> int:
@@ -174,6 +179,8 @@ class WalkingGraph:
                 "edge_key": edge_key(way_id, first, second),
                 "way_id": way_id,
                 "name": self.way_names.get(way_id, "Street"),
+                # True only for a real OSM street name; unnamed ways get their path type as `name`.
+                "named": way_id in self.named_ways,
                 "length_m": self.edges[first][second],
             })
         return result

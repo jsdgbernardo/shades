@@ -64,6 +64,16 @@ class AStarTests(unittest.TestCase):
         self.assertTrue(is_enclosed_ground_building({"building": "retail"}))
         self.assertTrue(is_enclosed_ground_building({"building": "yes", "layer": "0"}))
 
+    def test_route_edges_say_whether_the_street_has_a_real_name(self):
+        named = [way.way_id for way in app.OSM_DATA.ways if way.tags.get("name") and way.way_id in self.graph.way_names]
+        unnamed = [way.way_id for way in app.OSM_DATA.ways if not way.tags.get("name") and way.way_id in self.graph.way_names]
+        self.assertTrue(named and unnamed)
+        self.assertIn(named[0], self.graph.named_ways)
+        self.assertNotIn(unnamed[0], self.graph.named_ways)
+        path = self.graph.route_nodes(*self.pairs[0])
+        for edge in self.graph.path_edges(path):
+            self.assertEqual(edge["named"], edge["way_id"] in self.graph.named_ways)
+
     def test_shade_cost_is_never_below_length(self):
         cost = app.exposure_cost(self.model, set())
         for first, second in self.pairs[:3]:

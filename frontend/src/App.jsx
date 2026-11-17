@@ -1,20 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MapView from "./components/MapView.jsx";
 import LocationCard from "./components/LocationCard.jsx";
 import TimePill from "./components/TimePill.jsx";
 import RouteSheet from "./components/RouteSheet.jsx";
 import Legend from "./components/Legend.jsx";
 import { LocateIcon } from "./components/Icons.jsx";
-import StreetPanel from "./components/StreetPanel.jsx";
-import { ConnectionError, fetchCovered, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, setCovered } from "./lib/api.js";
+import StreetModal from "./components/StreetPanel.jsx";
+import { ConnectionError, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, setCovered } from "./lib/api.js";
 import { isOffRoute, projectOntoRoute, remainingFigures } from "./lib/geo.js";
+import { arrivalSummary, buildManeuvers, cumulative, hasArrived, headingAt, nextManeuver } from "./lib/nav.js";
+import { ArrivalCard, NavBanner, NavBar } from "./components/NavPanel.jsx";
 import { MAX_ACCURACY_METERS, geolocation, locationProblem } from "./lib/location.js";
 import { toInputValue, toOffsetIso } from "./lib/time.js";
 
 const STUDY_AREA = { south: 14.635, north: 14.65, west: 121.065, east: 121.083 };
 const inStudyArea = (latitude, longitude) =>
   latitude >= STUDY_AREA.south && latitude <= STUDY_AREA.north && longitude >= STUDY_AREA.west && longitude <= STUDY_AREA.east;
-const OUTSIDE_MESSAGE = "That point is outside the Katipunan test area. Choose a point inside it.";
 const GPS_OPTIONS = { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 };
 
 export default function App() {
@@ -32,22 +33,50 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [weather, setWeather] = useState(null);
   const [message, setMessage] = useState("");
+  const [locationUsable, setLocationUsable] = useState(true);
   const [online, setOnline] = useState(() => navigator.onLine);
   const [walk, setWalk] = useState({ active: false });
   const [userPosition, setUserPosition] = useState(null);
   const [offRoute, setOffRoute] = useState(null);
-  const [streetMode, setStreetMode] = useState(false);
-  const [street, setStreet] = useState(null);
+  // Tapped street or route section shown in the modal: { section, street, loading }.
+  const [tap, setTap] = useState(null);
   const [streetBusy, setStreetBusy] = useState(false);
   const [streetNotice, setStreetNotice] = useState("");
-  const [covered, setCoveredSections] = useState([]);
   const requestCounter = useRef(0);
   const selectedRouteRef = useRef(null);
   const positionRef = useRef(null);
   const promptDismissedRef = useRef(false);
 
   const selectedRoute = data?.routes?.find((route) => route.id === selectedId) ?? data?.routes?.[0] ?? null;
+  // Which comfort-window time the map shows for the selected route: 0 (now), 15 or 30 minutes.
+  const [timeOffset, setTimeOffset] = useState(0);
+  const selectedRouteId = selectedRoute?.id;
+  const mapRoutes = useMemo(() => (data?.routes ?? []).map((route) => {
+    if (route.id !== selectedRouteId || timeOffset === 0) return route;
+    const entry = route.comfort_window?.times?.find((time) => time.offset_minutes === timeOffset);
+    return entry?.exposure ? { ...route, exposure: entry.exposure } : route;
+  }), [data, selectedRouteId, timeOffset]);
+  // Covered marks are not drawn on their own; they show as part of a route that uses them.
+  // The one exception is the street section open in the street card, so a new mark is
+  // visible on the map as soon as it is saved (PRD S-10).
+  const openSection = tap?.street?.section;
+  const openCoveredSection = useMemo(() => (openSection?.covered ? [openSection] : []), [openSection]);
+  // Legend lists only the styles on the map: the selected route's sections (at the chosen time)
+  // plus the open covered section, if any.
+  const legendLabels = useMemo(() => {
+    const labels = new Set(mapRoutes.find((route) => route.id === selectedRouteId)?.exposure?.sections?.map((section) => section.label) ?? []);
+    if (openCoveredSection.length) labels.add("covered");
+    return labels;
+  }, [mapRoutes, selectedRouteId, openCoveredSection.length]);
   selectedRouteRef.current = selectedRoute;
+  // Manoeuvres for the selected route, used for turn-by-turn during the walk.
+  const routeNav = useMemo(() => {
+    if (!selectedRoute) return { maneuvers: [], distances: [0], total: 0 };
+    const distances = cumulative(selectedRoute.geometry);
+    return { maneuvers: buildManeuvers(selectedRoute.geometry, selectedRoute.edges), distances, total: distances[distances.length - 1] };
+  }, [selectedRoute]);
+  const routeNavRef = useRef(routeNav);
+  routeNavRef.current = routeNav;
 
   const travelTime = useCallback(
     () => toOffsetIso(leaveNow ? toInputValue(new Date()) : travelInput),
@@ -82,17 +111,20 @@ export default function App() {
   // Current location as the default start (PRD S-12, E-04).
   const locate = useCallback((setAsStart) => {
     const geo = geolocation();
-    if (!geo) { setMessage(locationProblem({ code: 2 })); return; }
+    // When location can't be used, the start field asks for an "Origin" instead of promising "Your Location".
+    const fail = (problem) => { setMessage(locationProblem(problem)); setLocationUsable(false); };
+    if (!geo) { fail({ code: 2 }); return; }
     geo.getCurrentPosition(
       (position) => {
         const { latitude, longitude, accuracy } = position.coords;
-        if (accuracy > MAX_ACCURACY_METERS) { setMessage(locationProblem({ code: "accuracy", accuracy })); return; }
-        if (!inStudyArea(latitude, longitude)) { setMessage(locationProblem({ code: "outside" })); return; }
+        if (accuracy > MAX_ACCURACY_METERS) { fail({ code: "accuracy", accuracy }); return; }
+        if (!inStudyArea(latitude, longitude)) { fail({ code: "outside" }); return; }
         setMessage("");
+        setLocationUsable(true);
         mapRef.current?.panTo(latitude, longitude);
         if (setAsStart) setStart({ latitude, longitude, source: "gps" });
       },
-      (failure) => setMessage(locationProblem(failure)),
+      fail,
       { ...GPS_OPTIONS, maximumAge: 30_000 },
     );
   }, []);
@@ -115,6 +147,7 @@ export default function App() {
       setData(payload);
       setWeather(payload.weather);
       setSelectedId((previous) => (payload.routes.some((route) => route.id === previous) ? previous : payload.routes.at(-1).id));
+      setTimeOffset(0);
       setStatus("results");
       mapRef.current?.fitGeometry(payload.routes.flatMap((route) => route.geometry));
     } catch (failure) {
@@ -126,7 +159,24 @@ export default function App() {
     }
   }, [start, destination, travelTime]);
 
-  useEffect(() => { loadRoutes(); }, [loadRoutes]);
+  // Routes are computed only when the user asks (Find routes). Changing the start, destination
+  // or time clears old results; accepting a reroute during a walk computes straight away.
+  const autoComputeRef = useRef(false);
+  useEffect(() => {
+    if (autoComputeRef.current) {
+      autoComputeRef.current = false;
+      loadRoutes();
+      return;
+    }
+    requestCounter.current += 1; // ignore any request still in flight for the old inputs
+    setData(null);
+    setStatus("idle");
+    setError("");
+    setWalk({ active: false });
+    setUserPosition(null);
+    setOffRoute(null);
+    setArrival(null);
+  }, [loadRoutes]);
 
   // Temperature and heat index for the pill before any route is requested.
   useEffect(() => {
@@ -135,21 +185,26 @@ export default function App() {
     return () => { cancelled = true; };
   }, [travelTime]);
 
-  // Covered marks shared by all users (PRD S-10, D-03).
-  const loadCovered = useCallback(() => {
-    fetchCovered().then((payload) => setCoveredSections(payload.covered ?? [])).catch(() => {});
-  }, []);
-  useEffect(() => { loadCovered(); }, [loadCovered]);
 
-  const pickStreet = async (latitude, longitude) => {
+  // Tapping a route section or any street opens the street modal (PRD I-01, S-08, S-10).
+  const tapCounter = useRef(0);
+  const handleTap = useCallback(async ({ lat, lng }, section) => {
+    if (!inStudyArea(lat, lng)) return;
+    const id = ++tapCounter.current;
     setStreetNotice("");
+    // A route section opens at once with its reason; a plain map tap opens only if a street is near.
+    if (section) setTap({ section, street: null, loading: true });
     try {
-      setStreet(await fetchNearestStreet(latitude, longitude));
-    } catch (failure) {
-      setStreet(null);
-      setStreetNotice(failure.message);
+      const street = await fetchNearestStreet(lat, lng);
+      if (id === tapCounter.current) setTap({ section, street, loading: false });
+    } catch {
+      if (id !== tapCounter.current) return;
+      if (section) setTap({ section, street: null, loading: false });
     }
-  };
+  }, []);
+
+  const street = tap?.street ?? null;
+  const setStreet = (update) => setTap((current) => (current ? { ...current, street: update(current.street) } : current));
 
   const rate = async (value) => {
     setStreetBusy(true);
@@ -157,7 +212,7 @@ export default function App() {
       const updated = await rateStreet(street.way_id, value);
       setStreet((current) => ({ ...current, walkability: updated.walkability }));
       setStreetNotice(`Thanks. You rated ${updated.name} ${value} out of 5.`);
-      loadRoutes();
+      if (data) loadRoutes(); // refresh routes already shown; never start a new search
     } catch (failure) {
       setStreetNotice(failure.message);
     } finally {
@@ -172,8 +227,7 @@ export default function App() {
       await setCovered(street.section.edge_key, next);
       setStreet((current) => ({ ...current, section: { ...current.section, covered: next } }));
       setStreetNotice(next ? "Marked as covered. Routes through it now count it as shaded." : "Covered mark removed.");
-      loadCovered();
-      loadRoutes();
+      if (data) loadRoutes();
     } catch (failure) {
       setStreetNotice(failure.message);
     } finally {
@@ -181,20 +235,7 @@ export default function App() {
     }
   };
 
-  const closeStreetMode = () => { setStreetMode(false); setStreet(null); setStreetNotice(""); };
-
-  const handleMapPick = useCallback(({ lat, lng }) => {
-    if (!inStudyArea(lat, lng)) { setMessage(OUTSIDE_MESSAGE); return; }
-    setMessage("");
-    if (streetMode) { pickStreet(lat, lng); return; }
-    const point = { latitude: lat, longitude: lng, source: "map" };
-    if (activeField === "start") {
-      setStart(point);
-      setActiveField("destination");
-    } else {
-      setDestination(point);
-    }
-  }, [activeField, streetMode]);
+  const closeTap = useCallback(() => { tapCounter.current += 1; setTap(null); setStreetNotice(""); }, []);
 
   const handlePick = (field, place) => {
     const point = { latitude: place.latitude, longitude: place.longitude, name: place.name, source: "search" };
@@ -214,9 +255,20 @@ export default function App() {
     if (!route) return;
     const projection = projectOntoRoute([longitude, latitude], route.geometry);
     const remaining = remainingFigures(route.exposure.sections, projection.along);
+    // Turn-by-turn and course-up heading, from the route itself (works while standing still).
+    const nav = routeNavRef.current;
+    const heading = headingAt(route.geometry, projection.along, nav.distances);
+    const maneuver = nextManeuver(nav.maneuvers, projection.along, nav.total);
+    // Arrived: within 15 m of the end while on the route. End the walk and show the summary.
+    if (!isOffRoute(projection.distanceFromRoute) && hasArrived(remaining.distance_m)) {
+      arriveRef.current?.(route);
+      return;
+    }
     setWalk((current) => (current.active ? {
       ...current,
       remaining,
+      heading,
+      maneuver,
       updatedAt: Date.now(),
       message: accuracy > MAX_ACCURACY_METERS ? `Your location is imprecise (about ±${Math.round(accuracy)} m).` : "",
     } : current));
@@ -234,7 +286,15 @@ export default function App() {
     if (!geo) return undefined;
     let watchId = null;
     let timer = null;
-    const failure = (problem) => setWalk((current) => ({ ...current, message: locationProblem(problem) }));
+    // Losing GPS drops back from navigation to the normal sheet (with the message) instead of
+    // freezing the rotated map on an old fix.
+    // A timeout (code 3) can just mean the walker is standing still, so it keeps navigation.
+    const failure = (problem) => {
+      if (problem?.code === 3) return;
+      setUserPosition(null);
+      positionRef.current = null;
+      setWalk((current) => ({ ...current, message: locationProblem(problem) }));
+    };
     const begin = () => {
       if (watchId !== null) return;
       watchId = geo.watchPosition(handlePosition, failure, GPS_OPTIONS);
@@ -253,11 +313,40 @@ export default function App() {
     return () => { end(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [walk.active, handlePosition]);
 
-  const startWalk = () => { promptDismissedRef.current = false; setWalk({ active: true, remaining: null, message: "" }); };
-  const stopWalk = () => { setWalk({ active: false }); setUserPosition(null); setOffRoute(null); positionRef.current = null; };
+  const startWalk = () => {
+    promptDismissedRef.current = false;
+    closeTap();
+    setArrival(null);
+    setWalk({ active: true, remaining: null, message: "", startedAt: Date.now() });
+  };
+  // Navigation view only once the walk has a GPS fix; otherwise the normal sheet shows "Locating…".
+  const navigation = walk.active && userPosition && walk.remaining && walk.heading != null
+    ? { latitude: userPosition.latitude, longitude: userPosition.longitude, heading: walk.heading }
+    : null;
+  const stopWalk = () => {
+    setWalk({ active: false });
+    setUserPosition(null);
+    setOffRoute(null);
+    positionRef.current = null;
+    // Back from the rotated navigation view: show the whole route again once the map has reset.
+    const geometry = selectedRouteRef.current?.geometry;
+    if (geometry) setTimeout(() => mapRef.current?.fitGeometry(geometry), 60);
+  };
+
+  // Arrival: stop following GPS, leave the navigation view and show a short summary.
+  const [arrival, setArrival] = useState(null);
+  const arriveRef = useRef(null);
+  arriveRef.current = (route) => {
+    if (!walk.active) return;
+    setArrival({ ...arrivalSummary(route, walk.startedAt ?? Date.now()), place: destination?.name ?? null });
+    stopWalk();
+  };
 
   const acceptReroute = () => {
-    if (positionRef.current) setStart({ ...positionRef.current, source: "gps" });
+    if (positionRef.current) {
+      autoComputeRef.current = true; // the user just asked to recalculate
+      setStart({ ...positionRef.current, source: "gps" });
+    }
     setOffRoute(null);
   };
   const declineReroute = () => { promptDismissedRef.current = true; setOffRoute(null); };
@@ -274,17 +363,19 @@ export default function App() {
           ref={mapRef}
           start={start}
           destination={destination}
-          routes={data?.routes ?? []}
+          routes={mapRoutes}
           selectedId={selectedRoute?.id}
           userPosition={userPosition}
-          coveredSections={covered}
-          highlight={streetMode ? street?.section?.geometry : null}
-          streetMode={streetMode}
-          onMapPick={handleMapPick}
+          coveredSections={openCoveredSection}
+          highlight={street?.section?.geometry ?? null}
+          navigation={navigation}
+          onTap={handleTap}
           onSelectRoute={setSelectedId}
         />
         {!online && <div className="offline-banner" role="alert">No connection. Routes and weather need the internet.</div>}
+        {navigation && <div className="nav-attribution">© OpenStreetMap contributors</div>}
         <div className="top-controls" ref={topControlsRef}>
+          {navigation ? <NavBanner maneuver={walk.maneuver} /> : <>
           <LocationCard
             start={start}
             destination={destination}
@@ -293,6 +384,7 @@ export default function App() {
             onPick={handlePick}
             onSwap={swap}
             onUseLocation={() => locate(true)}
+            locationUsable={locationUsable}
           />
           <TimePill
             leaveNow={leaveNow}
@@ -301,45 +393,45 @@ export default function App() {
             onChangeTime={(value) => { setTravelInput(value); setLeaveNow(false); }}
             onLeaveNow={() => { setTravelInput(toInputValue()); setLeaveNow(true); }}
           />
-        </div>
-        <div className="bottom-stack">
-        <div className="bottom-stack__row">
-          {status === "results" ? <Legend /> : <span />}
-          <button type="button" className="locate-button" onClick={locateButton} aria-label="Show my location"><LocateIcon /></button>
+          </>}
         </div>
         <RouteSheet
           status={status}
           error={error}
           message={message}
+          onDismissMessage={() => setMessage("")}
           data={data}
           selectedId={selectedRoute?.id}
           onSelect={setSelectedId}
           onRetry={loadRoutes}
+          canFind={Boolean(start && destination)}
+          onFind={loadRoutes}
           walk={walk}
           onStartWalk={startWalk}
           onStopWalk={stopWalk}
-        >
-          {streetMode ? (
-            <StreetPanel street={street} busy={streetBusy} notice={streetNotice} onRate={rate} onToggleCovered={toggleCovered} onClose={closeStreetMode} />
-          ) : (
-            <button type="button" className="more-button more-button--quiet" onClick={() => setStreetMode(true)}>
-              Rate a street or mark a covered walkway
-            </button>
-          )}
-        </RouteSheet>
-        </div>
-        {offRoute && (
-          <div className="dialog-backdrop">
-            <div className="dialog" role="alertdialog" aria-labelledby="off-route-title">
-              <h2 id="off-route-title">You have left the route</h2>
-              <p>You are about {Math.round(offRoute.distance)} m from it. Calculate a new route from where you are now?</p>
-              <div className="dialog__actions">
-                <button type="button" className="text-button" onClick={declineReroute}>Keep this route</button>
-                <button type="button" className="solid-button" onClick={acceptReroute}>Recalculate</button>
+          timeOffset={timeOffset}
+          onSelectTime={setTimeOffset}
+          accessory={<>
+            {status === "results" ? <Legend labels={legendLabels} /> : <span />}
+            {/* The map already follows the user while navigating. */}
+            {!navigation && <button type="button" className="locate-button" onClick={locateButton} aria-label="Show my location"><LocateIcon /></button>}
+          </>}
+          overlay={offRoute ? (
+            <section className="float-card reroute-card" role="alertdialog" aria-label="Off route">
+              <span>About <strong>{Math.round(offRoute.distance)} m</strong> off the route. Recalculate from here?</span>
+              <div className="reroute-card__actions">
+                <button type="button" className="text-button" onClick={declineReroute}>Keep</button>
+                <button type="button" className="solid-button solid-button--small" onClick={acceptReroute}>Recalculate</button>
               </div>
-            </div>
-          </div>
-        )}
+            </section>
+          ) : arrival ? (
+            <ArrivalCard arrival={arrival} onDone={() => setArrival(null)} />
+          ) : navigation ? (
+            <NavBar remaining={walk.remaining} message={walk.message} onEnd={stopWalk} />
+          ) : tap ? (
+            <StreetModal tap={tap} busy={streetBusy} notice={streetNotice} onRate={rate} onToggleCovered={toggleCovered} onClose={closeTap} />
+          ) : null}
+        />
       </section>
     </main>
   );

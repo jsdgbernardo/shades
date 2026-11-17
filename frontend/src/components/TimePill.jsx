@@ -19,22 +19,18 @@ export default function TimePill({ leaveNow, travelInput, onChangeTime, onLeaveN
         <ThermometerIcon />
         {weather ? (
           <span>
-            {temperature ?? "Temp. not available"}
+            {/* Missing readings are muted, not red: they are absent data, not a warning (F-12). */}
+            {temperature ?? <span className="time-pill__muted">Temp n/a</span>}
             <span className="time-pill__dot">·</span>
-            {heatIndex ? <>Heat index {heatIndex}</> : "Heat index not available"}
+            {heatIndex ? <>Heat index {heatIndex}</> : <span className="time-pill__muted">Heat index n/a</span>}
           </span>
         ) : <span className="time-pill__muted">—</span>}
       </div>
       {open && (
         <div className="time-popover">
-          <label>
-            Leave at
-            <input type="datetime-local" value={travelInput} onChange={(event) => onChangeTime(event.target.value)} />
-          </label>
-          <div className="time-popover__actions">
-            <button type="button" className="text-button" onClick={() => { onLeaveNow(); setOpen(false); }}>Leave now</button>
-            <button type="button" className="solid-button" onClick={() => setOpen(false)}>Done</button>
-          </div>
+          <input type="datetime-local" aria-label="Leave at" value={travelInput} onChange={(event) => onChangeTime(event.target.value)} />
+          <button type="button" className="text-button" onClick={() => { onLeaveNow(); setOpen(false); }}>Now</button>
+          <button type="button" className="solid-button solid-button--small" onClick={() => setOpen(false)}>Done</button>
         </div>
       )}
     </div>

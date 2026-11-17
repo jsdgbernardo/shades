@@ -12,7 +12,7 @@ Shades is a phone-first web app that gives shade-aware walking routes for the Ka
   - Every non-stretch requirement has an implementation. LOG.md's dated entries record what was verified and what still needs people or a phone.
   - F-16 to F-19, D-04 and C-07 (train routing) are stretch goals and are not built.
 - **The UI follows `reference/home page.png`**:
-  - a full-bleed OSM map
+  - a full-bleed OSM map in its original colours (the user tried greyscale and softened versions and prefers the original); routes get a white casing so they stand out
   - a floating white card with "Your Location" (blue, circle icon) and "Destination" (orange-brown, pin icon), joined by a dotted line, with a swap button
   - a pill row with "Leave Now" and the temperature in red
   - a round locate button at the bottom right
@@ -90,11 +90,14 @@ cd frontend; npm run build
   - the route request
   - the live walk: `watchPosition` plus a 5 s poll, paused on `visibilitychange`
   - the off-route prompt at 30 m
-  - street mode (taps go to `/api/streets/nearest` instead of setting points)
-  - covered marks
+  - map taps: start and destination are set only by search or GPS. A tap on a route section or a street calls `/api/streets/nearest` and opens `StreetModal` (`components/StreetPanel.jsx`), which shows the section reason, rating and covered toggle. This follows PRD S-02.
+  - covered marks: not drawn on their own. They show only as `covered` sections of a generated route, plus the one section open in the street card (so a new mark is visible on save, S-10).
+  - routes are computed only on "Find routes" (or an accepted reroute); changing start, destination or time clears results
 - `components/MapView.jsx` wraps raw Leaflet:
   - Section styles differ by pattern as well as colour (S-04).
-  - Tapping a section opens a popup with its reason (I-01).
+  - Taps go to `onTap(latlng, section | null)` (I-01).
+- `components/RouteSheet.jsx` is the whole bottom stack: the legend and locate row, then a drag sheet (peek ↔ expanded, physics in `lib/spring.js` per SKILL.md) or an `overlay` card (street details, off-route prompt) that replaces it. Keep the UI compact and free of how-to text; the user wants most of the map visible at all times.
+- **Navigation mode** (walk + GPS fix): `lib/nav.js` derives manoeuvres from route geometry (bearing change ≥ 30° over ±12 m, merged within 15 m; street names only when the API edge has `named: true`) and the course-up heading. `App.jsx` swaps the top cards for `NavBanner` and the sheet for `NavBar` (`components/NavPanel.jsx`). `MapView` follows the user and rotates by resizing the map element to a square that covers the phone at any angle, centred 60% down, and rotating it with CSS; panning and taps are off while navigating, but pinch, double-tap and wheel zoom stay on in Leaflet's `"center"` mode (zooms around the map centre, which is the user; rotation-safe), and the user's zoom is kept across GPS updates. GPS denied or unavailable (not timeout) drops back to the normal sheet.
 - `lib/geo.js` projects a position onto the route and computes the remaining figures client-side (F-13).
 - `lib/location.js` handles geolocation errors and accuracy (E-04) and contains the dev simulator.
 

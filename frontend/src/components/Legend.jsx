@@ -22,10 +22,13 @@ function Swatch({ label }) {
   );
 }
 
-export default function Legend() {
+/** Legend for the styles currently on the map only, so it stays one short line (S-04). */
+export default function Legend({ labels }) {
+  const shown = ITEMS.filter((item) => !labels || labels.has(item.label));
+  if (!shown.length) return null;
   return (
     <ul className="legend" aria-label="Map legend">
-      {ITEMS.map((item) => <li key={item.label}><Swatch label={item.label} />{item.text}</li>)}
+      {shown.map((item) => <li key={item.label}><Swatch label={item.label} />{item.text}</li>)}
     </ul>
   );
 }

@@ -8,7 +8,7 @@ function displayName(point, field) {
   return point.name || (field === "start" ? "Pinned start" : "Pinned destination");
 }
 
-function Field({ field, point, active, onActivate, onPick, onUseLocation }) {
+function Field({ field, point, active, onActivate, onPick, onUseLocation, locationUsable = true }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const [results, setResults] = useState([]);
@@ -29,7 +29,7 @@ function Field({ field, point, active, onActivate, onPick, onUseLocation }) {
   }, [query, editing]);
 
   const close = () => { setEditing(false); setQuery(""); setResults([]); setSearchError(""); };
-  const placeholder = field === "start" ? "Your Location" : "Destination";
+  const placeholder = field === "start" ? (locationUsable ? "Your Location" : "Origin") : "Destination";
   const name = displayName(point, field);
 
   return (
@@ -49,11 +49,11 @@ function Field({ field, point, active, onActivate, onPick, onUseLocation }) {
           if (event.key === "Enter" && results[0]) { onPick(field, results[0]); inputRef.current?.blur(); }
         }}
       />
-      {editing && (
+      {editing && (field === "start" || query.trim().length >= 2) && (
         <ul className="place-results" role="listbox">
           {field === "start" && (
             <li><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { onUseLocation(); inputRef.current?.blur(); }}>
-              <strong>Use my current location</strong>
+              <strong>Current location</strong>
             </button></li>
           )}
           {results.map((place) => (
@@ -61,22 +61,21 @@ function Field({ field, point, active, onActivate, onPick, onUseLocation }) {
               <strong>{place.name}</strong><small>{place.kind}</small>
             </button></li>
           ))}
-          {query.trim().length >= 2 && !results.length && !searchError && <li className="place-results__empty">No places found in the test area. You can also tap the map.</li>}
+          {query.trim().length >= 2 && !results.length && !searchError && <li className="place-results__empty">No places found in the test area</li>}
           {searchError && <li className="place-results__empty">{searchError}</li>}
-          {query.trim().length < 2 && <li className="place-results__empty">Type a place name, or tap the map to drop a pin.</li>}
         </ul>
       )}
     </div>
   );
 }
 
-export default function LocationCard({ start, destination, activeField, onActivate, onPick, onSwap, onUseLocation }) {
+export default function LocationCard({ start, destination, activeField, onActivate, onPick, onSwap, onUseLocation, locationUsable }) {
   return (
     <section className="location-card" aria-label="Trip">
       <div className="location-card__rows">
-        <Field field="start" point={start} active={activeField === "start"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} />
+        <Field field="start" point={start} active={activeField === "start"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} locationUsable={locationUsable} />
         <span className="location-card__connector" aria-hidden="true" />
-        <Field field="destination" point={destination} active={activeField === "destination"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} />
+        <Field field="destination" point={destination} active={activeField === "destination"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} locationUsable={locationUsable} />
       </div>
       <button type="button" className="swap-button" onClick={onSwap} aria-label="Swap start and destination"><SwapIcon /></button>
     </section>

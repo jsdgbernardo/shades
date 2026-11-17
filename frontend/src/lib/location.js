@@ -34,7 +34,10 @@ function simulatedProvider() {
     watchPosition(success, failure) {
       const id = nextId++;
       watchers.set(id, { success, failure });
-      if (current) setTimeout(() => success(current), 0);
+      setTimeout(() => {
+        if (denied) failure?.({ code: 1 });
+        else if (current) success(current);
+      }, 0);
       return id;
     },
     clearWatch(id) { watchers.delete(id); },
@@ -53,8 +56,8 @@ export function geolocation() {
 /** Message for a failed or imprecise location (PRD E-04). */
 export function locationProblem(error) {
   if (!error) return null;
-  if (error.code === 1) return "Location permission was denied. Search for a start point or tap the map to set one.";
-  if (error.code === "accuracy") return `Your location is too imprecise (about ±${Math.round(error.accuracy)} m). Search for a start point or tap the map to set one.`;
-  if (error.code === "outside") return "Your location is outside the Katipunan test area. Search for a start point or tap the map to set one.";
-  return "Your location is unavailable right now. Search for a start point or tap the map to set one.";
+  if (error.code === 1) return "Location access denied";
+  if (error.code === "accuracy") return `Location too imprecise (±${Math.round(error.accuracy)} m)`;
+  if (error.code === "outside") return "You are outside the test area";
+  return "Location unavailable";
 }

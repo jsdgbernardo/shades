@@ -48,15 +48,17 @@ Press `Ctrl+C` in each terminal running the backend and frontend.
 
 ## Use the prototype
 
-1. Allow location access to use your current position as the start point. Alternatively, type a place name in **Your Location** or tap the field and then the map.
-2. Type a place name in **Destination** (for example "Rizal Library") or tap the map.
+1. Allow location access to use your current position as the start point. Alternatively, type a place name in **Your Location**.
+2. Type a place name in **Destination**, for example "Rizal Library". Start and destination are set by search or location only; tapping the map does not drop a pin.
 3. **Leave Now** uses the current time. Tap it to choose another time.
 4. Compare the **Shortest** and **Shadier** route cards. Each shows the share of the route in direct sun, the minutes in the sun, the distance and the walking time.
-5. Tap a coloured section of the route to see why it is labelled sunny, shaded, covered or shade unknown.
+5. Tap a coloured section of the route, or any street on the map, to open its details. The details show:
+   - why a route section is labelled sunny, shaded, covered or shade unknown
+   - the street's walkability, with buttons to rate it 1–5
+   - a button to mark the highlighted stretch as a covered walkway, or remove the mark
 6. Open **Best time to leave, live walk and details** to see:
    - the sun share now, in 15 minutes and in 30 minutes
-   - **Start walk**, which follows your position and updates the figures for the rest of the route
-7. Use **Rate a street or mark a covered walkway** to rate a street 1–5, or to mark or unmark a section as covered.
+   - **Start**, which begins the walk. With a GPS fix the app switches to navigation: a banner with the next turn and its distance, a map that follows you and rotates in your direction of travel, and a bar with time and distance left and the sun on the rest of the route. Without GPS the walk shows "Locating…" and keeps the normal view.
 
 The temperature and heat index in the top bar are weather readings for context only. They never change routes or scores.
 
