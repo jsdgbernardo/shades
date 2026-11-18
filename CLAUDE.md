@@ -41,7 +41,8 @@ On this machine `python` may resolve to the Microsoft Store alias. The interpret
 The tests import `app` as a top-level module, so they must run with `backend/` on the path (`-s backend` does this). Importing `app` parses the OSM extract and the GeoTIFF and opens the SQLite store, which takes about 2–3 s. Tests that write ratings or covered marks patch `app.STORE` with a temporary `Store`. Tests that build routes patch `app.fetch_weather` so they don't hit the network.
 
 ```powershell
-cd frontend; npm install; npm run dev -- --host 127.0.0.1    # http://127.0.0.1:5173 (VITE_API_URL overrides the API)
+cd frontend; npm install; npm run dev -- --host 127.0.0.1    # http://127.0.0.1:5173; /api is proxied to SHADES_API_PORT (default 8000); VITE_API_URL overrides
+cd frontend; npm run phone                                   # build + preview on 127.0.0.1:4173 for the Cloudflare tunnel (see README "Use on your phone")
 cd frontend; npm test                                        # vitest (pure helpers in src/lib)
 cd frontend; npx vitest run src/lib/geo.test.js              # single test file
 cd frontend; npm run build

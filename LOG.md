@@ -809,3 +809,38 @@ Ways tagged `indoor=yes` are excluded entirely. Two new tests in `test_routing.p
   - Navigation was gone, the search cards were back and the map was unrotated.
   - Done removed the card and showed the route sheet with Start.
 - **Caveat.** Time taken shows "<1 min" because the simulated walk took about 25 s of real time.
+
+## 2026-11-18: Floating cards spaced like the top cards
+
+- **Change.** The navigation bar and the other floating bottom cards (arrival, street card, reroute prompt, messages, Find routes) now sit as far from the bottom as the top cards sit from the top, with the same side margins.
+  - New CSS variables `--bottom-gap` and `--side-gap` hold these gaps. Before, the cards were 14 px from the bottom in the phone frame and 2 px on a real phone, with 10 px sides.
+- **Unit fix.** `--top-offset` now uses container-query height units (`6cqh`, with `.phone` set to `container-type: size`) instead of `6%`. A percentage in a margin is a share of the width, so the bottom gap had come out 3 px smaller than the top gap.
+- **Real phones.** The bottom gap uses the bottom safe area.
+- **Verification.**
+  - In the 1366×768 phone frame (360×720 phone), the top gap was 43 px, the bottom gap 43 px and the sides 12 px.
+  - At 390×844 (full-screen phone layout), the gaps were 10 / 10 / 10 px, with no horizontal scroll.
+  - `npx vitest run` → 24 tests, OK. `npm run build` → OK.
+
+## 2026-11-18: Phone access over any network through a Cloudflare tunnel
+
+### Changes
+
+- **One local address.** The app is now served from a single address so a public link can reach it.
+  - `frontend/vite.config.js` proxies `/api` to the Python API (`127.0.0.1:${SHADES_API_PORT || 8000}`) for both `vite` and `vite preview`.
+  - It accepts `.trycloudflare.com` host names.
+  - The frontend's default `API_URL` is now `""`, meaning same-origin `/api/...`. `VITE_API_URL` still overrides it.
+- **`npm run phone`.** Builds the app and serves it with `vite preview` on `127.0.0.1:4173`. The API stays bound to `127.0.0.1`.
+- **cloudflared installed.** Version 2026.11.1 was installed with winget (installer hash verified) after the user approved it. `cloudflared tunnel --url http://127.0.0.1:4173` gives a public https link that works over mobile data. That https link is what lets phone browsers share GPS with the app.
+- **Docs and preview config.**
+  - README has a "Use on your phone" section, with the caveats: keep the laptop on, the link changes on restart, anyone with the link can use it, and location is still never logged.
+  - `.claude/launch.json` has a `phone` preview, which uses the 8010 preview API.
+
+### Verification
+
+- **Frontend:** `npx vitest run` → 24 tests, OK. `npm run build` → OK.
+- **Locally:** `http://127.0.0.1:4173/api/health` → ok, `/api/places?q=Rizal Lib` → results, and the page → 200. The built app called `/api/weather` on its own origin.
+- **Through the tunnel** (`https://manual-fuzzy-explaining-officers.trycloudflare.com`, a temporary link):
+  - `/api/health` → 200, the page → 200, and `POST /api/routes` → 200.
+  - In the browser pane the app loaded with `isSecureContext: true`, geolocation available, and same-origin API calls.
+- **Not done:** opening the link on the user's phone over mobile data needs the user's phone.
+- **Note:** two processes were already listening on `127.0.0.1:8000` (PIDs 22080 and 23220), probably older copies of the API. The check used the current preview API on 8010 instead.

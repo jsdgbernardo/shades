@@ -57,10 +57,14 @@ button:disabled { opacity: .5; cursor: default; }
   box-shadow: 0 0 0 10px #1f2122, 0 0 0 12px #3a3d3f, 0 30px 70px rgb(0 0 0 / 28%);
   isolation: isolate;
   /* At least 40px so the cards clear the frame's rounded corners. */
-  --top-offset: clamp(40px, 6%, 56px);
+  /* cqh = % of the phone's height, so the value is the same in `top` and in margins */
+  container-type: size;
+  --top-offset: clamp(40px, 6cqh, 56px);
   /* Fallback only; App measures the real bottom of the top cards and overrides this. */
   --top-clearance: calc(var(--top-offset) + 116px);
   --frame-bottom: 22px; /* keeps content clear of the rounded phone corners */
+  --side-gap: 12px;     /* matches .top-controls left/right */
+  --bottom-gap: var(--top-offset); /* floating cards sit as far from the bottom as the top cards from the top */
 }
 .map { position: absolute; inset: 0; z-index: 0; background: #f2efe9; }
 .leaflet-control-attribution { font-size: 9px; background: rgb(255 255 255 / 70%) !important; }
@@ -178,11 +182,12 @@ button:disabled { opacity: .5; cursor: default; }
 .icon-button { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border: 0; border-radius: 50%; color: var(--muted); background: rgb(32 33 36 / 7%); font-size: 18px; line-height: 1; }
 
 /* Floating cards: street details, off-route prompt, status toast. No scrim: the map stays usable. */
-.float-card, .toast { margin: 0 10px calc(var(--frame-bottom) - 8px); padding: 8px 10px; border-radius: 16px; }
+/* Same gap below the floating cards as above the top cards, and the same side margins. */
+.float-card, .toast { margin: 0 var(--side-gap) var(--bottom-gap); padding: 8px 10px; border-radius: 16px; }
 .toast { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; line-height: 1.35; }
 .toast--warn { color: #7a3d08; }
 .toast:has(+ .find-bar) { margin-bottom: 6px; }
-.find-bar { padding: 0 10px calc(var(--frame-bottom) - 8px); }
+.find-bar { padding: 0 var(--side-gap) var(--bottom-gap); }
 .find-button { width: 100%; min-height: 40px; box-shadow: var(--shadow); font-size: 14px; }
 
 .street-card__header { display: flex; align-items: center; gap: 8px; }
@@ -232,7 +237,7 @@ button:disabled { opacity: .5; cursor: default; }
 
 @media (max-width: 520px) {
   .app-shell { display: block; padding: 0; }
-  .phone { width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; box-shadow: none; --top-offset: calc(10px + env(safe-area-inset-top)); --frame-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  .phone { width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; box-shadow: none; --top-offset: calc(10px + env(safe-area-inset-top)); --frame-bottom: calc(10px + env(safe-area-inset-bottom)); --side-gap: 10px; --bottom-gap: calc(10px + env(safe-area-inset-bottom)); }
   .top-controls { left: 10px; right: 10px; }
 }
 

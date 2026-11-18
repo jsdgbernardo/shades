@@ -16,6 +16,14 @@
       "env": { "VITE_API_URL": "http://127.0.0.1:8010" },
       "port": 5180,
       "autoPort": false
+    },
+    {
+      "name": "phone",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "phone"],
+      "env": { "SHADES_API_PORT": "8010" },
+      "port": 4173,
+      "autoPort": false
     }
   ]
 }

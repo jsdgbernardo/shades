@@ -38,13 +38,45 @@ npm install
 npm run dev -- --host 127.0.0.1
 ```
 
-Open `http://127.0.0.1:5173/` in a browser. If the API runs on another port, start Vite with `VITE_API_URL` set, for example `$env:VITE_API_URL='http://127.0.0.1:8010'`.
+Open `http://127.0.0.1:5173/` in a browser. Vite passes `/api` requests to the API on port 8000. If the API runs on another port, start Vite with `SHADES_API_PORT` set to that port, for example `$env:SHADES_API_PORT='8010'`.
 
 On a desktop-sized browser, the app is displayed inside a virtual phone frame so the mobile layout can be tested without a physical device. On a real phone, the frame is removed and the app uses the full viewport.
 
 ### 3. Stop the application
 
 Press `Ctrl+C` in each terminal running the backend and frontend.
+
+## Use on your phone (any network)
+
+A free Cloudflare Quick Tunnel gives the app a public https link that works over mobile data. No account is needed. Phones only share GPS with https pages, so the tunnel also enables the location features.
+
+One-time setup:
+
+```powershell
+winget install --id Cloudflare.cloudflared
+```
+
+Then run these in three terminals from the repository root:
+
+```powershell
+python backend\app.py
+```
+
+```powershell
+cd frontend; npm run phone
+```
+
+```powershell
+cloudflared tunnel --url http://127.0.0.1:4173
+```
+
+`npm run phone` builds the app and serves it on `127.0.0.1:4173`, passing `/api` to the API. Open the `https://…trycloudflare.com` link that `cloudflared` prints on your phone.
+
+- **Keep the laptop running:** it must stay on and awake while you use the phone.
+- **New link each time:** the link changes whenever the tunnel restarts.
+- **Anyone can use it:** anyone with the link can open the app and add ratings or covered marks, so press `Ctrl+C` in the tunnel terminal when you're done.
+- **Privacy:** traffic is encrypted to Cloudflare. As everywhere in the app, your location is sent only inside route requests and is never logged.
+- **Restart old API copies:** if an older copy of the API is still running on port 8000, stop it and start it again so the phone gets the current version.
 
 ## Use the prototype
 
