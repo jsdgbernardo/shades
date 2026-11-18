@@ -38,7 +38,13 @@ python backend\acceptance.py                                 # scripted PRD evid
 
 On this machine `python` may resolve to the Microsoft Store alias. The interpreter used during development is `C:\msys64\mingw64\bin\python.exe`.
 
-The tests import `app` as a top-level module, so they must run with `backend/` on the path (`-s backend` does this). Importing `app` parses the OSM extract and the GeoTIFF and opens the SQLite store, which takes about 2–3 s. Tests that write ratings or covered marks patch `app.STORE` with a temporary `Store`. Tests that build routes patch `app.fetch_weather` so they don't hit the network.
+The tests import `app` as a top-level module, so they must run with `backend/` on the path (`-s backend` does this). Importing `app` reads the GeoTIFF and build-info, and opens the places index and the SQLite store, which takes about 2 s. Graph tiles load lazily as routes need them. Tests that write ratings or covered marks patch `app.STORE` with a temporary `Store`. Tests that build routes patch `app.fetch_weather` so they don't hit the network.
+
+The map data is prebuilt and committed (`datasets/tiles/`, `datasets/derived/`). Rebuild it only when the OSM source changes. This needs the Geofabrik Philippines PBF in `datasets/raw/` (gitignored) and pyosmium, a build-only dependency, under Python 3.13:
+
+```powershell
+py -3.13 -m pip install osmium; py -3.13 backenduild_tiles.py    # ~3–4 min; see datasets/README.md
+```
 
 ```powershell
 cd frontend; npm install; npm run dev -- --host 127.0.0.1    # http://127.0.0.1:5173; /api is proxied to SHADES_API_PORT (default 8000); VITE_API_URL overrides
@@ -52,12 +58,18 @@ cd frontend; npm run build
 
 ## Architecture
 
-**Backend** (`backend/`, a stdlib `http.server`, no framework). The module-level singletons are built once at import: `OSM_DATA`, `WALKING_GRAPH`, `HEIGHT_RASTER`, `PLACE_INDEX` and `STORE`. The handler functions `create_*_response(...)` return `(status, body)` and are what the tests call directly, with no HTTP involved.
+**Backend** (`backend/`, a stdlib `http.server`, no framework). The module-level singletons are built once at import: `WALKING_GRAPH` (over a `TileStore`), `HEIGHT_RASTER`, `PLACE_INDEX` and `STORE`. The handler functions `create_*_response(...)` return `(status, body)` and are what the tests call directly, with no HTTP involved.
 
-- `osm.py`: a single parse of `datasets/katipunan-walking-network.osm`. It provides nodes, ways, named nodes and building footprints.
+- `area.py`: the study area (a Metro Manila box), the 0.02° tile grid (`tile_of`, shared by build and runtime) and `MAX_TRIP_M` (10 km).
+- `build_tiles.py` (build only, pyosmium): streams the PBF and writes:
+  - `datasets/tiles/{col}_{row}.json.gz`: walkable nodes, directed edges `[a, b, length, way]` (each in its start node's tile) and way labels
+  - `datasets/derived/places.db` (FTS5), `unknown-height-cells.bin` (D-01) and `build-info.json` (counts)
+  - Indoor edges (C-01) and disconnected fragments under 200 nodes are dropped here.
+- `tiles.py`: `TileStore` loads tiles lazily into an LRU cache and answers `neighbors`, `nodes_near` and `edges_near`.
+- `osm.py`: only `is_enclosed_ground_building` and `FootprintIndex`, used by the build.
 - `shade.py`:
   - A hand-written GeoTIFF reader (tiled, PackBits, float32), with NaN meaning unknown height.
-  - `mark_unknown_footprints()` sets the cells of any OSM building whose raster height is all 0 to NaN (D-01).
+  - `mark_unknown_footprints()` (at build time) finds the cells of any OSM building whose raster height is all 0; `mark_unknown_cells()` sets them to NaN at startup (D-01). Outside the Quezon City raster every sample is unknown.
   - `solar_position()` uses NOAA's general equations in Asia/Manila time.
   - `ExposureModel` belongs to one travel time. It cuts segments into pieces of about 10 m and ray-marches toward the sun every 2 m. The labels are:
     - `shaded`: a known building taller than `1.7 + d·tan(elev)`, or the sun is below the horizon
@@ -67,13 +79,14 @@ cd frontend; npm run build
   - Results are memoized per segment.
   - `analyze_route()` merges pieces into sections with reasons and computes the figures: `sun_percent` and `sun_minutes` treat **unknown as sun** (E-03), and covered counts as shaded (S-11).
 - `routing.py`:
-  - `WalkingGraph` uses **A\*** with a haversine heuristic. Costs must be ≥ the edge length to keep it exact, and a test checks this against Dijkstra.
+  - `WalkingGraph` uses **A\*** with a haversine heuristic over the tile store, so only tiles along the corridor load. Costs must be ≥ the edge length to keep it exact, and a test checks this against Dijkstra. `max_cost` stops a hopeless search early.
   - Each edge keeps its OSM `way_id`, and `edge_key()` = `"way:nodeLow-nodeHigh"`. These ids are what ratings and covered marks are stored against.
   - Vehicle `oneway` tags are ignored for pedestrians.
   - Edges through enclosed ground-level OSM buildings are dropped at build time (C-01; `osm.is_enclosed_ground_building`, `FootprintIndex`). Open roofs, raised buildings and `tunnel=building_passage` ways stay walkable.
 - `app.py`:
-  - **Shortest route:** cost = length.
-  - **Shadier route:** cost = shaded + 3 × (sun + unknown), via `exposure_cost`. It is returned only if its sun % is lower.
+  - Trips over 10 km straight-line are refused, and points with no path within 400 m get a message.
+  - **Shortest route:** cost = length, search limited to 2.5 × straight-line + 1 km.
+  - **Shadier route:** cost = shaded + 3 × (sun + unknown), via `exposure_cost`, limited to 3 × the shortest route's length (lossless). It is returned only if its sun % is lower.
   - Each route also gets:
     - `comparison` (F-09)
     - `comfort_window`: +0/+15/+30 min, with `recommend()` saying "wait" only if a later time is at least 5 points lower (F-15)
@@ -81,7 +94,7 @@ cd frontend; npm run build
   - Weather is fetched after routing.
   - `log_message` is silenced so locations are never logged (C-04).
 - `weather.py`: Open-Meteo hourly UV, temperature and humidity, plus an NWS heat index. Each reading is `{"status": "available"|"not available"}`. Failures are not cached.
-- `places.py`: offline search over the names in the OSM extract, one entry per name.
+- `places.py`: offline FTS5 search over `places.db` (prefix matches first, then by distance to the other trip point via `near=lat,lon`).
 - `storage.py`: SQLite in `data/shades.db` (gitignored), opening one connection per call because the server is threaded. Streets with fewer than 3 ratings show "not enough ratings". Route walkability is the length-weighted average over rated streets.
 
 **Frontend** (`frontend/src/`):
@@ -102,7 +115,7 @@ cd frontend; npm run build
 - `lib/geo.js` projects a position onto the route and computes the remaining figures client-side (F-13).
 - `lib/location.js` handles geolocation errors and accuracy (E-04) and contains the dev simulator.
 
-**Data** (`datasets/`): the OSM extract is the bbox `121.065,14.635,121.083,14.650` (ODbL, see `datasets/README.md`). Height rasters exist for 2016–2030, but only 2026 is used.
+**Data** (`datasets/`): built from the Geofabrik Philippines extract clipped to Metro Manila (ODbL, see `datasets/README.md`). Building heights cover Quezon City only; elsewhere shade is unknown and counts as sun (accepted). Height rasters exist for 2016–2030, but only 2026 is used.
 
 ## Project rules
 

@@ -8,7 +8,7 @@ function displayName(point, field) {
   return point.name || (field === "start" ? "Pinned start" : "Pinned destination");
 }
 
-function Field({ field, point, active, onActivate, onPick, onUseLocation, locationUsable = true }) {
+function Field({ field, point, other, active, onActivate, onPick, onUseLocation, locationUsable = true }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const [results, setResults] = useState([]);
@@ -21,12 +21,13 @@ function Field({ field, point, active, onActivate, onPick, onUseLocation, locati
       return undefined;
     }
     const timer = setTimeout(() => {
-      searchPlaces(query.trim())
+      // Rank results near the other end of the trip, so "7-Eleven" finds the branch close by.
+      searchPlaces(query.trim(), other)
         .then((payload) => { setResults(payload.places ?? []); setSearchError(""); })
         .catch((error) => { setResults([]); setSearchError(error.message); });
     }, 200);
     return () => clearTimeout(timer);
-  }, [query, editing]);
+  }, [query, editing, other]);
 
   const close = () => { setEditing(false); setQuery(""); setResults([]); setSearchError(""); };
   const placeholder = field === "start" ? (locationUsable ? "Your Location" : "Origin") : "Destination";
@@ -61,7 +62,7 @@ function Field({ field, point, active, onActivate, onPick, onUseLocation, locati
               <strong>{place.name}</strong><small>{place.kind}</small>
             </button></li>
           ))}
-          {query.trim().length >= 2 && !results.length && !searchError && <li className="place-results__empty">No places found in the test area</li>}
+          {query.trim().length >= 2 && !results.length && !searchError && <li className="place-results__empty">No places found in Metro Manila</li>}
           {searchError && <li className="place-results__empty">{searchError}</li>}
         </ul>
       )}
@@ -73,9 +74,9 @@ export default function LocationCard({ start, destination, activeField, onActiva
   return (
     <section className="location-card" aria-label="Trip">
       <div className="location-card__rows">
-        <Field field="start" point={start} active={activeField === "start"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} locationUsable={locationUsable} />
+        <Field field="start" point={start} other={destination} active={activeField === "start"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} locationUsable={locationUsable} />
         <span className="location-card__connector" aria-hidden="true" />
-        <Field field="destination" point={destination} active={activeField === "destination"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} locationUsable={locationUsable} />
+        <Field field="destination" point={destination} other={start} active={activeField === "destination"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} locationUsable={locationUsable} />
       </div>
       <button type="button" className="swap-button" onClick={onSwap} aria-label="Swap start and destination"><SwapIcon /></button>
     </section>

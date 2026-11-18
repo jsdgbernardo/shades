@@ -14,11 +14,34 @@ class PlaceSearchTests(unittest.TestCase):
         for place in response["places"]:
             self.assertTrue(app.is_in_study_area(place["latitude"], place["longitude"]))
 
-    def test_prefix_matches_rank_first_and_names_are_unique(self):
+    def test_prefix_matches_rank_first(self):
         places = app.PLACE_INDEX.search("katip")
         self.assertTrue(places[0]["name"].lower().startswith("katip"))
-        names = [place["name"].casefold() for place in app.PLACE_INDEX.places]
-        self.assertEqual(len(names), len(set(names)))
+
+    def test_finds_places_across_metro_manila(self):
+        """The index covers Metro Manila, not just Katipunan."""
+        for query, south, north, west, east in [
+            ("Greenbelt", 14.545, 14.560, 121.010, 121.030),         # Makati
+            ("Bonifacio High Street", 14.545, 14.560, 121.040, 121.060),  # BGC
+            ("Rizal Park", 14.575, 14.590, 120.970, 120.990),          # Manila
+        ]:
+            with self.subTest(query=query):
+                places = app.PLACE_INDEX.search(query)
+                self.assertTrue(places, f"no results for {query}")
+                self.assertTrue(any(south <= p["latitude"] <= north and west <= p["longitude"] <= east for p in places),
+                                f"{query} not found in the expected area: {places[:3]}")
+
+    def test_near_ranks_the_closest_branch_first(self):
+        katipunan, makati = (14.6400, 121.0750), (14.5540, 121.0240)
+        near_katipunan = app.PLACE_INDEX.search("7-Eleven", near=katipunan)
+        near_makati = app.PLACE_INDEX.search("7-Eleven", near=makati)
+        self.assertTrue(near_katipunan and near_makati)
+        def distance(place, point):
+            return abs(place["latitude"] - point[0]) + abs(place["longitude"] - point[1])
+        self.assertLess(distance(near_katipunan[0], katipunan), distance(near_makati[0], katipunan))
+        self.assertLess(distance(near_makati[0], makati), distance(near_katipunan[0], makati))
+        status, response = app.create_places_response({"q": ["7-Eleven"], "near": ["14.6400,121.0750"]})
+        self.assertEqual((status, response["places"][0]["id"]), (200, near_katipunan[0]["id"]))
 
     def test_short_or_empty_query_returns_nothing(self):
         self.assertEqual(app.create_places_response({"q": ["r"]})[1]["places"], [])

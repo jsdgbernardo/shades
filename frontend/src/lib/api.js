@@ -31,12 +31,18 @@ export function fetchRoutes({ start, destination, travelTime }) {
   });
 }
 
+export function fetchHealth() {
+  return request("/api/health");
+}
+
 export function fetchWeather(travelTime) {
   return request(`/api/weather?time=${encodeURIComponent(travelTime)}`);
 }
 
-export function searchPlaces(query) {
-  return request(`/api/places?q=${encodeURIComponent(query)}`);
+/** Place search; `near` ({latitude, longitude}) ranks same-named places (chain stores) by distance. */
+export function searchPlaces(query, near = null) {
+  const nearParam = near ? `&near=${near.latitude.toFixed(4)},${near.longitude.toFixed(4)}` : "";
+  return request(`/api/places?q=${encodeURIComponent(query)}${nearParam}`);
 }
 
 export function fetchNearestStreet(latitude, longitude) {

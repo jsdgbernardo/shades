@@ -1,6 +1,6 @@
 # Shades
 
-Shade-aware walking routes for the Katipunan and Ateneo de Manila University area. For a trip and a departure time, Shades shows the shortest route and a shadier alternative. For each route it shows how much is in direct sun, the minutes spent in the sun, the distance and the walking time.
+Shade-aware walking routes across Metro Manila, with building-height shade data for Quezon City (including Katipunan and Ateneo de Manila University). For a trip and a departure time, Shades shows the shortest route and a shadier alternative. For each route it shows how much is in direct sun, the minutes spent in the sun, the distance and the walking time.
 
 ## Prerequisites
 
@@ -144,4 +144,4 @@ python backend\acceptance.py
 - Covered walkways count as shaded only where users have marked them.
 - Walkability scores come only from user ratings. They never affect routing.
 - Location is used only while the app is open: to set the start point, show your position and detect when you leave the route. It is never stored or logged.
-- The prototype is limited to the ADMU/Katipunan bounding box. It does not provide indoor routing, thermal comfort, heat-stress or health-risk predictions. The MRT/LRT train option (PRD F-16–F-19) is not built.
+- The prototype covers a Metro Manila bounding box and walking trips up to 10 km. Building heights exist only for Quezon City, so elsewhere shade is "unknown" and counts as sun. Map data is prebuilt into tiles; see `datasets/README.md` to rebuild it. It does not provide indoor routing, thermal comfort, heat-stress or health-risk predictions. The MRT/LRT train option (PRD F-16–F-19) is not built.

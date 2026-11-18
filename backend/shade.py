@@ -121,6 +121,22 @@ class HeightRaster:
         value = float(self.values[cell[0] * self.width + cell[1]])
         return None if math.isnan(value) else value
 
+    def mark_unknown_cells(self, path: Path) -> int:
+        """Mark raster cells listed in a build output file (uint32 indices) as unknown height.
+
+        build_tiles.py computes these with mark_unknown_footprints over all OSM buildings, so
+        the API does not need to load building footprints at startup.
+        """
+        cells = array("I")
+        if Path(path).exists():
+            with open(path, "rb") as handle:
+                cells.frombytes(handle.read())
+        size = len(self.values)
+        for index in cells:
+            if index < size:
+                self.values[index] = math.nan
+        return len(cells)
+
     def mark_unknown_footprints(self, footprints: list[list[tuple[float, float]]]) -> dict[str, int]:
         """Flag building footprints that the raster reports as open ground.
 

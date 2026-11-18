@@ -1,0 +1,23 @@
+{
+  "source": "OpenStreetMap via Geofabrik (philippines-latest.osm.pbf), \u00a9 OpenStreetMap contributors, ODbL",
+  "source_modified": "2026-11-18",
+  "built": "2026-11-18",
+  "study_area": {
+    "name": "Metro Manila",
+    "south": 14.35,
+    "north": 14.79,
+    "west": 120.9,
+    "east": 121.15
+  },
+  "tiles": 253,
+  "directed_edges": 1212485,
+  "indoor_edges_excluded": 4383,
+  "fragment_edges_excluded": 23609,
+  "places": 150860,
+  "building_heights": {
+    "buildings": 645517,
+    "with_height": 413178,
+    "without_height": 232339
+  },
+  "unknown_height_cells": 371766
+}

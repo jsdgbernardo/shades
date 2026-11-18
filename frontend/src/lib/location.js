@@ -58,6 +58,6 @@ export function locationProblem(error) {
   if (!error) return null;
   if (error.code === 1) return "Location access denied";
   if (error.code === "accuracy") return `Location too imprecise (±${Math.round(error.accuracy)} m)`;
-  if (error.code === "outside") return "You are outside the test area";
+  if (error.code === "outside") return "You are outside Metro Manila";
   return "Location unavailable";
 }

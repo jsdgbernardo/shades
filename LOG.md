@@ -844,3 +844,117 @@ Ways tagged `indoor=yes` are excluded entirely. Two new tests in `test_routing.p
   - In the browser pane the app loaded with `isSecureContext: true`, geolocation available, and same-origin API calls.
 - **Not done:** opening the link on the user's phone over mobile data needs the user's phone.
 - **Note:** two processes were already listening on `127.0.0.1:8000` (PIDs 22080 and 23220), probably older copies of the API. The check used the current preview API on 8010 instead.
+
+## 2026-11-18: Vector map (MapLibre GL + OpenFreeMap) in place of Leaflet raster tiles
+
+### Changes
+
+- **Sharper map that rotates for real.** The OSM raster tiles were blurry on phone screens, and Leaflet could only fake course-up by enlarging and CSS-rotating the map element. The user chose a vector map with no API key.
+  - `leaflet` was removed and `maplibre-gl` (6.19.0) added. `main.jsx` imports `maplibre-gl/dist/maplibre-gl.css` instead of Leaflet's CSS.
+  - The basemap is the OpenFreeMap "liberty" style (`https://tiles.openfreemap.org/styles/liberty`), in its own colours. It renders at the screen's pixel density.
+  - Vite pre-bundles the library, which breaks its built-in worker lookup, so `MapView.jsx` points `setWorkerUrl` at `maplibre-gl/dist/maplibre-gl-worker.mjs?url`.
+- **`MapView.jsx` rewritten; same props and ref methods** (`fitGeometry`, `panTo`, `resetView`), so `App.jsx` is unchanged apart from one line.
+  - Routes, sections, covered marks and the highlight are GeoJSON sources with line layers. They keep the old look: white casing (12 px selected, 9 px others), sun solid orange, shaded teal with a white dotted overlay, unknown grey dashed with "?" markers at section midpoints, covered purple with a white centre line, and other routes grey. Patterns still differ without colour (S-04).
+  - The tapped section or street highlight now draws on top of the route. Before, the selected route's white casing hid it on route sections.
+  - Markers are DOM markers with the existing `map-point` and `map-heading` classes. The heading arrow uses `rotationAlignment: "map"` and is rotated to the heading.
+  - Taps use `queryRenderedFeatures` with a ±6 px box. A section opens the street card, another route selects it, and anything else is a plain street tap with `{lat, lng}`.
+  - The map starts at the same centre (Katipunan, zoom 17). Panning is limited to roughly Metro Manila (lat 14.30–14.85, lon 120.85–121.20, min zoom 11) so it keeps working as the study area grows. The study-area logic in `App.jsx` was not touched.
+  - Outside navigation the map stays north-up, with rotate and tilt gestures off.
+- **Navigation mode uses native rotation.**
+  - Each GPS update calls `easeTo` with the heading as bearing and top padding of 20% of the height, so the user sits 60% down.
+  - Entering navigation zooms to 18. This zoom stays pending until it is reached, because back-to-back GPS updates were cancelling the first animation and leaving the map at the route-fit zoom. After that, updates keep the user's zoom. A pinch or wheel zoom also cancels the pending zoom.
+  - Pan, keyboard, box zoom and map taps are off. Pinch and wheel zoom stay on around the centre (the user).
+  - Leaving navigation drops the padding, turns back to north-up and re-enables gestures. The route fit uses bearing 0.
+- **Attribution.** MapLibre's compact attribution is at the top right, just below the top cards, where the bottom sheet cannot cover it. It folds to its (i) button when a route is fitted. The Leaflet rotation CSS (`.map--navigating`, `.leaflet-*`) and the separate `.nav-attribution` overlay in `App.jsx` were removed.
+- **Hot reload.** Every map effect checks that its map is still mounted. A hot reload re-runs effects with the removed map still in state, which had crashed the page.
+
+### Verification
+
+- **Frontend:** `npx vitest run` → 24 tests, OK. `npm run build` → OK (Vite warns that the main chunk is over 500 kB, because MapLibre is bundled in).
+- **Browser preview** (Vite on 5180 with `/?simulate-location`). The working-tree backend could not start, because the Metro Manila tiling work in progress needs `datasets/derived/build-info.json`. The check used the committed backend (HEAD), run from a scratch copy on port 8010 with its own scratch database, so test ratings did not reach `data/`.
+  - The vector map is crisp at device pixel ratio 1.25, with street and POI labels.
+  - A route to "Rizal Library" at 9:00 drew sun, shaded and (after marking) covered sections with the right patterns, plus the start and destination markers.
+  - Tapping a section opened the street card with the section reason. Marking it covered showed the purple section right away. The mark was then removed again.
+  - The +30 min chip redrew the route (91% → 92% sun).
+  - For a trip to Gonzaga Cafeteria at 10:00 (two routes), the other route rendered grey. Picking the Shadier card swapped which route was grey.
+  - **Simulated walk:**
+    - The map rotated to the heading (bearing 89° when walking east), with labels upright.
+    - The user arrow sat at exactly 50% across and 60% down and pointed up.
+    - The zoom went to 18. A wheel zoom to 17.6 was kept after the next GPS update.
+    - Panning was off, and a tap on the route opened nothing.
+  - **End of walk:** bearing 0 and padding 0, gestures back on, and the route re-fitted.
+- **Not verified:**
+  - The "?" markers on unknown sections: none of about 70 probed trips at 10:00 had an unknown section with the committed backend.
+  - Tapping a grey alternate route to select it: in the tested trip it ran entirely under the selected route.
+  - Pinch-zoom and rotation on a real phone.
+- **Known overlap:** after a route fit, the folded attribution (i) button can sit over the destination marker when the destination is near the top right.
+- **Follow-up (same day):** at the Metro Manila session's request, `STUDY_BOUNDS` in `MapView.jsx` is now the Metro Manila study area (S 14.35, N 14.79, W 120.90, E 121.15), matching `/api/health`. Nothing imports it. The pan limit (`MAX_BOUNDS`, lat 14.30–14.85, lon 120.85–121.20) already covered this box with a small margin. The initial view stays on Katipunan. `npx vitest run` → 24 tests, OK. `npm run build` → OK.
+
+## 2026-11-18: Metro Manila study area with on-demand graph tiles
+
+The test area grows from the 2 km Katipunan box to Metro Manila (S 14.35, N 14.79, W 120.90, E 121.15; `backend/area.py`). Building heights still cover only Quezon City. Elsewhere every section is "shade unknown" and counts as sun (E-03), which the user accepted. PRD O-01 now names Metro Manila.
+
+### Data build
+
+- **Source and build:** the Geofabrik Philippines extract (614 MB, `datasets/raw/`, gitignored), streamed once by `backend/build_tiles.py` with pyosmium 4.3.2 under Python 3.13, a build-only dependency. The API stays stdlib-only.
+- **Read:** 162,161 walkable ways, 1,662,924 buildings and 182,455 named features.
+- **Graph:**
+  - Written as 253 tiles of 0.02°, 15.9 MB gzipped JSON, in `datasets/tiles/`.
+  - 1,212,485 directed edges.
+  - Dropped: 4,383 indoor edges (C-01) and 23,609 edges in disconnected fragments under 200 nodes. Those fragments made snapped points unroutable and sent A\* across the city.
+- **Derived files** (15 MB, `datasets/derived/`): `places.db` (150,860 places, FTS5), `unknown-height-cells.bin` (D-01: 413,178 of 645,517 buildings in the raster have heights, 232,339 are flagged unknown) and `build-info.json`.
+- **Build time:** 208 s.
+- **Removed:** `datasets/katipunan-walking-network.osm` and the XML loader.
+
+### Runtime
+
+- **Tiles:** `tiles.TileStore` loads tiles lazily into an LRU cache, so API startup is 2.2 s whatever the area size.
+- **Search limits in `route_nodes(max_cost=…)`:**
+  - The shortest search allows 3 × straight-line + 5 km, up to 15 km. A first limit of 2.5 × + 1 km failed a real 337 m trip whose only path is 4.5 km.
+  - The shadier search is limited to 3 × the shortest route's length. That limit is lossless, since the most an edge can cost is 3 × its length.
+- **Trip limits:**
+  - Trips over 10 km straight-line get a 422.
+  - Points with no path within 400 m get "There is no walking path near the …".
+- **Place search:**
+  - Uses FTS5.
+  - Ranks by prefix, then by distance to the other trip point (`near=lat,lon`), or to Katipunan (`area.HOME`) when none is set. Without that default, the many "Rizal" places across Metro Manila pushed out Rizal Library.
+  - About 10 ms per query.
+- **Frontend:**
+  - `App.jsx` reads the study area from `/api/health`, falling back to the Metro Manila box.
+  - Messages now say "outside Metro Manila" and "No places found in Metro Manila".
+
+### Verification
+
+- **Backend:** `python -m unittest discover -s backend -p 'test_*.py'` → 69 tests, OK. New tests cover:
+  - a route across a tile boundary
+  - a Makati route that is over 90% unknown
+  - the 10 km refusal
+  - a point in Manila Bay
+  - the search limit
+  - Makati, BGC and Manila place search
+  - nearest-branch ranking
+- **Timing** (in-process, weather patched out; cold then warm):
+
+  | Trip | Cold | Warm | Tiles loaded |
+  | --- | --- | --- | --- |
+  | Katipunan 0.5 km | 0.28 s | 0.11 s | 9 |
+  | Katipunan → UP Diliman (2 km) | 0.50 s | 0.44 s | 3 |
+  | Makati 0.7 km | 0.44 s | 0.30 s | 9 |
+  | Cubao → Katipunan (4.5 km) | 2.0 s | 2.2 s | 5 |
+  | Manila Bay | 0.01 s (422) | | |
+
+  Before the fragment fix, Makati failed with a 422 after 8–10 s and 252 tile loads. Longer routes are now dominated by shade ray-marching, not data loading.
+- **`backend/acceptance.py`** (live weather; 6 Katipunan, 2 Makati and 2 Manila pairs at three times):
+  - P-01: 30 of 30 requests within 10 s (median 1.67 s, max 4.22 s).
+  - F-01: 30 of 30 returned routes with sun figures.
+  - F-04: 7 of 30 returned a shadier alternative.
+  - 36 tiles were loaded for the run.
+- **Frontend:** `npx vitest run` → 24 tests, OK. `vite build` into a scratch directory → OK.
+- **Browser check** (preview API on 8010, Vite on 5180, after the vector-map session finished):
+  - Place search found Greenbelt 4 and Ayala Triangle Gardens.
+  - The Makati route (477 m) drew on the MapLibre map. At about 19:00 it was fully shaded, because the sun was down.
+  - Through the same API at 12:00, the Makati route is 100% "unknown" and counts as 100% sun.
+  - A 12.6 km trip returned the "Too far" message, and `/api/health` returned the Metro Manila area.
+- **Not verified:**
+  - The "?" markers on unknown sections in the browser.
+  - Use on a phone.

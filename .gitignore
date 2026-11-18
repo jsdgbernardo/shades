@@ -8,3 +8,6 @@ node_modules/
 # Local user data (ratings and covered marks)
 data/*.db
 data/*.db-journal
+
+# Raw downloads for the data build (large; not committed)
+datasets/raw/

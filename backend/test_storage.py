@@ -81,7 +81,8 @@ class WalkabilityTests(TempStoreCase):
 
     def test_rating_unknown_street_is_rejected(self):
         self.assertEqual(app.create_rating_response(999999999999, {"rating": 3})[0], 404)
-        self.assertEqual(app.create_rating_response(next(iter(app.WALKING_GRAPH.way_names)), {"rating": 9})[0], 400)
+        street = app.WALKING_GRAPH.nearest_edge((14.6407, 121.0748), max_distance_m=60)
+        self.assertEqual(app.create_rating_response(street["way_id"], {"rating": 9})[0], 400)
 
 
 class CoveredTests(TempStoreCase):
@@ -114,7 +115,7 @@ class CoveredTests(TempStoreCase):
         self.assertEqual(restored["routes"][0]["exposure"], route["exposure"])
 
     def test_covered_list_returns_geometry(self):
-        key = next(iter(app.WALKING_GRAPH.edge_keys()))
+        key = app.WALKING_GRAPH.nearest_edge((14.6407, 121.0748), max_distance_m=60)["edge_key"]
         app.create_covered_update_response(key, True)
         status, response = app.create_covered_list_response()
         self.assertEqual(status, 200)

@@ -10,21 +10,15 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
-from osm import FootprintIndex, load_osm
+from area import HOME, MAX_TRIP_M, MAX_WALK_M, STUDY_AREA, in_study_area
 from places import PlaceIndex
-from routing import WalkingGraph, edge_key
+from routing import WalkingGraph, edge_key, haversine_meters
 from shade import WALKING_SPEED_M_PER_MIN, ExposureModel, HeightRaster, analyze_route, shift_time
 from storage import DEFAULT_PATH, Store, route_walkability, street_score
+from tiles import TileStore
 from weather import fetch_weather
 
-
-STUDY_AREA = {
-    "name": "Katipunan and Ateneo de Manila University",
-    "south": 14.635,
-    "north": 14.650,
-    "west": 121.065,
-    "east": 121.083,
-}
+DERIVED_DIR = Path(__file__).parents[1] / "datasets" / "derived"
 STUDY_CENTER = ((STUDY_AREA["south"] + STUDY_AREA["north"]) / 2, (STUDY_AREA["west"] + STUDY_AREA["east"]) / 2)
 SHADIER_SUN_WEIGHT = 3.0
 COMFORT_OFFSETS_MINUTES = (0, 15, 30)
@@ -39,21 +33,18 @@ ASSUMPTIONS = {
     ],
 }
 
-OSM_DATA = load_osm()
-ENCLOSED_BUILDINGS = FootprintIndex(OSM_DATA.building_footprints(enclosed_only=True))
-WALKING_GRAPH = WalkingGraph.from_osm(OSM_DATA, ENCLOSED_BUILDINGS)
+# Prebuilt data (backend/build_tiles.py). Nothing is parsed at startup: graph tiles load on
+# demand, place search reads a SQLite index, and buildings without heights come as raster cells.
+BUILD_INFO = json.loads((DERIVED_DIR / "build-info.json").read_text(encoding="utf-8"))
+WALKING_GRAPH = WalkingGraph(TileStore(), BUILD_INFO.get("indoor_edges_excluded", 0))
 HEIGHT_RASTER = HeightRaster.from_file()
-BUILDING_HEIGHT_REPORT = HEIGHT_RASTER.mark_unknown_footprints(OSM_DATA.building_footprints())
+HEIGHT_RASTER.mark_unknown_cells(DERIVED_DIR / "unknown-height-cells.bin")
+BUILDING_HEIGHT_REPORT = BUILD_INFO["building_heights"]
+PLACE_INDEX = PlaceIndex(DERIVED_DIR / "places.db")
 
 
 def is_in_study_area(latitude: float, longitude: float) -> bool:
-    return (
-        STUDY_AREA["south"] <= latitude <= STUDY_AREA["north"]
-        and STUDY_AREA["west"] <= longitude <= STUDY_AREA["east"]
-    )
-
-
-PLACE_INDEX = PlaceIndex.from_osm(OSM_DATA, is_in_study_area)
+    return in_study_area(latitude, longitude)
 
 
 STORE = Store(Path(os.environ.get("SHADES_DB", DEFAULT_PATH)))
@@ -76,7 +67,7 @@ def validate_point(point: Any, field_name: str) -> tuple[float, float]:
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"{field_name} must contain numeric latitude and longitude") from error
     if not is_in_study_area(latitude, longitude):
-        raise ValueError(f"The {field_name} is outside the Katipunan study area. Choose a point inside the test area.")
+        raise ValueError(f"The {field_name} is outside the study area ({STUDY_AREA['name']}). Choose a point inside it.")
     return latitude, longitude
 
 
@@ -140,11 +131,22 @@ def compare(shortest: dict[str, Any], shadier: dict[str, Any]) -> dict[str, floa
 
 
 def build_routes(start: tuple[float, float], destination: tuple[float, float], travel_time: str) -> dict[str, Any]:
+    # Walking trips only: keeps every request to the tiles along one corridor (user decision: 10 km).
+    if haversine_meters(start, destination) > MAX_TRIP_M:
+        raise RouteError(f"Too far for a walking route (over {MAX_TRIP_M // 1000} km). Choose points closer together.")
     start_node = WALKING_GRAPH.nearest_node(start)
     destination_node = WALKING_GRAPH.nearest_node(destination)
+    if start_node is None or destination_node is None:
+        which = "start" if start_node is None else "destination"
+        raise RouteError(f"There is no walking path near the {which}. Choose a point closer to a street or path.")
     if start_node == destination_node:
         raise RouteError("The start and destination are at the same spot on the walking network. Choose points farther apart.")
-    shortest_path = WALKING_GRAPH.route_nodes(start_node, destination_node)
+    # Search limits keep a failing request from exploring the whole city. Detours around rivers
+    # and gated villages can be long (a 337 m gap needed a 4.5 km walk), so the shortest search
+    # allows 3x the straight-line distance + 5 km, up to MAX_WALK_M. The shadier search can never
+    # beat 3x the shortest route's length (its worst edge cost is 3x length), so that bound loses nothing.
+    straight = haversine_meters(WALKING_GRAPH.coordinates[start_node], WALKING_GRAPH.coordinates[destination_node])
+    shortest_path = WALKING_GRAPH.route_nodes(start_node, destination_node, max_cost=min(3 * straight + 5000, MAX_WALK_M))
     if len(shortest_path) < 2:
         raise RouteError("No walking route was found between those points. Try moving the start or destination closer to a street or path.")
 
@@ -152,7 +154,8 @@ def build_routes(start: tuple[float, float], destination: tuple[float, float], t
     model = ExposureModel(HEIGHT_RASTER, travel_time, STUDY_CENTER[0], STUDY_CENTER[1])
     shortest = build_route("shortest", "Shortest route", shortest_path, travel_time, model, covered)
     routes = [shortest]
-    shadier_path = WALKING_GRAPH.route_nodes(start_node, destination_node, exposure_cost(model, covered))
+    shadier_limit = SHADIER_SUN_WEIGHT * WALKING_GRAPH.path_cost(shortest_path) + 1
+    shadier_path = WALKING_GRAPH.route_nodes(start_node, destination_node, exposure_cost(model, covered), max_cost=shadier_limit)
     note = None
     if shadier_path and shadier_path != shortest_path:
         shadier = build_route("shadier", "Shadier route", shadier_path, travel_time, model, covered)
@@ -216,7 +219,16 @@ def create_weather_response(query: dict[str, list[str]]) -> tuple[int, dict[str,
 
 
 def create_places_response(query: dict[str, list[str]]) -> tuple[int, dict[str, Any]]:
-    return 200, {"places": PLACE_INDEX.search((query.get("q") or [""])[0])}
+    """Place search; near=lat,lon ranks same-named places (chain stores) by distance.
+
+    Without it, results rank from HOME (Katipunan), where the map opens.
+    """
+    try:
+        lat_text, lon_text = (query.get("near") or [""])[0].split(",")
+        near = (float(lat_text), float(lon_text))
+    except ValueError:
+        near = HOME
+    return 200, {"places": PLACE_INDEX.search((query.get("q") or [""])[0], near=near)}
 
 
 def street_payload(way_id: int) -> dict[str, Any]:

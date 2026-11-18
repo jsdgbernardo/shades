@@ -11,7 +11,7 @@ NEARBY = {"latitude": 14.6378, "longitude": 121.0776}
 class RouteApiTests(unittest.TestCase):
     def test_katipunan_bounds_accept_admu_and_reject_outside_points(self):
         self.assertTrue(is_in_study_area(14.6407, 121.0748))
-        self.assertFalse(is_in_study_area(14.6000, 121.0748))
+        self.assertFalse(is_in_study_area(14.3000, 121.0748))
 
     @patch("app.fetch_weather")
     def test_route_request_returns_routes_and_weather_context(self, fetch_weather):
@@ -35,7 +35,7 @@ class RouteApiTests(unittest.TestCase):
 
     def test_route_request_rejects_points_outside_study_area(self):
         for field in ("start", "destination"):
-            payload = {"start": ADMU, "destination": NEARBY, field: {"latitude": 14.6000, "longitude": 121.0748}}
+            payload = {"start": ADMU, "destination": NEARBY, field: {"latitude": 14.3000, "longitude": 121.0748}}
             status, response = create_route_response(payload)
             self.assertEqual(status, 400)
             self.assertIn("outside", response["error"])

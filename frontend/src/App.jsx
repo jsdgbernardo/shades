@@ -6,16 +6,17 @@ import RouteSheet from "./components/RouteSheet.jsx";
 import Legend from "./components/Legend.jsx";
 import { LocateIcon } from "./components/Icons.jsx";
 import StreetModal from "./components/StreetPanel.jsx";
-import { ConnectionError, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, setCovered } from "./lib/api.js";
+import { ConnectionError, fetchHealth, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, setCovered } from "./lib/api.js";
 import { isOffRoute, projectOntoRoute, remainingFigures } from "./lib/geo.js";
 import { arrivalSummary, buildManeuvers, cumulative, hasArrived, headingAt, nextManeuver } from "./lib/nav.js";
 import { ArrivalCard, NavBanner, NavBar } from "./components/NavPanel.jsx";
 import { MAX_ACCURACY_METERS, geolocation, locationProblem } from "./lib/location.js";
 import { toInputValue, toOffsetIso } from "./lib/time.js";
 
-const STUDY_AREA = { south: 14.635, north: 14.65, west: 121.065, east: 121.083 };
+// Metro Manila until /api/health answers; the API's backend/area.py is the source of truth.
+let studyArea = { south: 14.35, north: 14.79, west: 120.9, east: 121.15 };
 const inStudyArea = (latitude, longitude) =>
-  latitude >= STUDY_AREA.south && latitude <= STUDY_AREA.north && longitude >= STUDY_AREA.west && longitude <= STUDY_AREA.east;
+  latitude >= studyArea.south && latitude <= studyArea.north && longitude >= studyArea.west && longitude <= studyArea.east;
 const GPS_OPTIONS = { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 };
 
 export default function App() {
@@ -106,6 +107,10 @@ export default function App() {
     window.addEventListener("online", up);
     window.addEventListener("offline", down);
     return () => { window.removeEventListener("online", up); window.removeEventListener("offline", down); };
+  }, []);
+
+  useEffect(() => {
+    fetchHealth().then((payload) => { if (payload.study_area) studyArea = payload.study_area; }).catch(() => {});
   }, []);
 
   // Current location as the default start (PRD S-12, E-04).
@@ -373,7 +378,6 @@ export default function App() {
           onSelectRoute={setSelectedId}
         />
         {!online && <div className="offline-banner" role="alert">No connection. Routes and weather need the internet.</div>}
-        {navigation && <div className="nav-attribution">© OpenStreetMap contributors</div>}
         <div className="top-controls" ref={topControlsRef}>
           {navigation ? <NavBanner maneuver={walk.maneuver} /> : <>
           <LocationCard
