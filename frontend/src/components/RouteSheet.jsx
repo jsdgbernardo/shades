@@ -53,7 +53,7 @@ function bestTime(window) {
  * compact overlay card (street details, off-route prompt). Drag follows SKILL.md:
  * 1:1 tracking, rubber-band at the ends, momentum projection, interruptible spring.
  */
-export default function RouteSheet({ status, error, message, onDismissMessage, data, selectedId, onSelect, onRetry, walk, onStartWalk, onStopWalk, accessory, overlay, timeOffset = 0, onSelectTime, canFind = false, onFind }) {
+export default function RouteSheet({ status, error, message, onDismissMessage, data, selectedId, onSelect, onRetry, walk, onStartWalk, onStopWalk, accessory, overlay, timeOffset = 0, onSelectTime, canFind = false, onFind, onClose }) {
   const stackRef = useRef(null);
   const sheetRef = useRef(null);
   const peekRef = useRef(null);
@@ -83,6 +83,9 @@ export default function RouteSheet({ status, error, message, onDismissMessage, d
   const selected = routes.find((route) => route.id === selectedId) ?? routes[0];
   const weather = data?.weather;
   const draggable = status === "results" && selected && !overlay;
+  // Swiping the collapsed sheet down dismisses the routes (not during a walk).
+  const closable = Boolean(onClose) && !walk?.active;
+  const closedOffset = () => (sheetRef.current?.offsetHeight ?? 0) + 16;
 
   const apply = useCallback((offset) => {
     offsetRef.current = offset;
@@ -94,14 +97,15 @@ export default function RouteSheet({ status, error, message, onDismissMessage, d
     stack.style.setProperty("--sheet-progress", progress.toFixed(3));
   }, []);
 
-  const settle = useCallback((target, velocity = 0) => {
+  const settle = useCallback((target, velocity = 0, done = null) => {
     cancelRef.current?.();
     cancelRef.current = null;
     collapsedRef.current = target > 0;
-    if (prefersReducedMotion()) { apply(target); return; }
-    // Bounce only when the gesture carried momentum; otherwise critically damped.
-    const damping = Math.abs(velocity) > 300 ? 0.8 : 1;
-    cancelRef.current = animateSpring({ from: offsetRef.current, to: target, velocity, damping, response: 0.3, onUpdate: apply, onDone: () => { cancelRef.current = null; } });
+    forceRender((n) => n + 1);
+    if (prefersReducedMotion()) { apply(target); done?.(); return; }
+    // Bounce only when the gesture carried momentum (never when leaving); otherwise critically damped.
+    const damping = Math.abs(velocity) > 300 && !done ? 0.8 : 1;
+    cancelRef.current = animateSpring({ from: offsetRef.current, to: target, velocity, damping, response: 0.3, onUpdate: apply, onDone: () => { cancelRef.current = null; done?.(); } });
   }, [apply]);
 
   // The collapsed offset hides everything below the peek; recompute when content changes.
@@ -141,22 +145,34 @@ export default function RouteSheet({ status, error, message, onDismissMessage, d
     return () => clearTimeout(timer);
   }, [data, apply]);
 
+  // The whole sheet drags, not just the grab bar; open, the details scroll natively instead.
+  // Pointer capture starts only once the finger has moved, so taps still reach the buttons.
+  const justDraggedRef = useRef(false);
   const onPointerDown = (event) => {
-    if (!draggable) return;
+    if (!draggable || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (!collapsedRef.current && bodyRef.current?.contains(event.target)) return;
     cancelRef.current?.();
     cancelRef.current = null;
-    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ }
-    dragRef.current = { y: event.clientY, offset: offsetRef.current, moved: false, samples: [{ t: event.timeStamp, y: event.clientY }] };
+    justDraggedRef.current = false;
+    dragRef.current = {
+      y: event.clientY, offset: offsetRef.current, moved: false, id: event.pointerId,
+      onGrab: Boolean(event.target.closest?.(".sheet-grab")),
+      samples: [{ t: event.timeStamp, y: event.clientY }],
+    };
   };
   const onPointerMove = (event) => {
     const drag = dragRef.current;
     if (!drag) return;
     const dy = event.clientY - drag.y;
-    if (!drag.moved && Math.abs(dy) < 8) return; // small hysteresis before committing to a drag
-    drag.moved = true;
+    if (!drag.moved) {
+      if (Math.abs(dy) < 8) return; // small hysteresis before committing to a drag
+      drag.moved = true;
+      try { event.currentTarget.setPointerCapture(drag.id); } catch { /* pointer already gone */ }
+    }
     const raw = drag.offset + dy;
     const max = maxRef.current;
-    const offset = raw < 0 ? rubberband(raw, max || 1) : raw > max ? max + rubberband(raw - max, max || 1) : raw;
+    // Below collapsed the sheet tracks 1:1 when it can be dismissed; otherwise it rubber-bands.
+    const offset = raw < 0 ? rubberband(raw, max || 1) : raw > max && !closable ? max + rubberband(raw - max, max || 1) : raw;
     apply(offset);
     drag.samples = [...drag.samples.slice(-5), { t: event.timeStamp, y: event.clientY }];
   };
@@ -164,10 +180,22 @@ export default function RouteSheet({ status, error, message, onDismissMessage, d
     const drag = dragRef.current;
     dragRef.current = null;
     if (!drag) return;
-    if (!drag.moved) { settle(collapsedRef.current ? 0 : maxRef.current); return; }
+    if (!drag.moved) {
+      if (drag.onGrab && event.type === "pointerup") settle(collapsedRef.current ? 0 : maxRef.current);
+      return;
+    }
+    justDraggedRef.current = true;
     const velocity = releaseVelocity([...drag.samples, { t: event.timeStamp, y: event.clientY }]);
-    const target = nearest([0, maxRef.current], offsetRef.current + project(velocity));
+    // Dismissing is offered only to a drag that started from the collapsed sheet.
+    const closed = closedOffset();
+    const canClose = closable && drag.offset >= maxRef.current - 1;
+    const target = nearest(canClose ? [0, maxRef.current, closed] : [0, maxRef.current], offsetRef.current + project(velocity));
+    if (canClose && target === closed) { settle(closed, velocity, onClose); return; }
     settle(target, velocity);
+  };
+  // A drag that ends over a button must not also press it.
+  const onClickCapture = (event) => {
+    if (justDraggedRef.current) { event.stopPropagation(); event.preventDefault(); justDraggedRef.current = false; }
   };
 
   const row = <div className="bottom-stack__row">{accessory}</div>;
@@ -202,17 +230,25 @@ export default function RouteSheet({ status, error, message, onDismissMessage, d
   return (
     <div className="bottom-stack" ref={stackRef}>
       {row}
-      <section className="route-sheet" ref={sheetRef} aria-label="Routes">
+      <section
+        className={`route-sheet ${collapsedRef.current ? "route-sheet--collapsed" : ""}`}
+        ref={sheetRef}
+        aria-label="Routes"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onClickCapture={onClickCapture}
+      >
         <div
           className="sheet-grab"
           role="button"
           tabIndex={0}
           aria-label={collapsedRef.current ? "Show details" : "Hide details"}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") settle(collapsedRef.current ? 0 : maxRef.current); }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") settle(collapsedRef.current ? 0 : maxRef.current);
+            if (event.key === "Escape" && closable) settle(closedOffset(), 0, onClose);
+          }}
         />
         <div className="sheet-peek" ref={peekRef}>
           {message && <p className="sheet-note sheet-note--warn">{message}</p>}

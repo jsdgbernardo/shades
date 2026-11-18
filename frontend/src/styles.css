@@ -123,8 +123,8 @@ button:disabled { opacity: .5; cursor: default; }
 .bottom-stack > * { pointer-events: auto; }
 .bottom-stack__row { flex: none; display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; padding: 0 12px 8px; pointer-events: none; }
 .bottom-stack__row > * { pointer-events: auto; }
-.locate-button { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border: 0; border-radius: 50%; color: var(--ink); }
-.locate-button svg { width: 22px; height: 22px; }
+.locate-button { display: grid; place-items: center; flex: none; width: 66px; height: 66px; border: 0; border-radius: 50%; color: var(--ink); }
+.locate-button svg { width: 33px; height: 33px; }
 .legend { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 0; padding: 5px 8px; list-style: none; border-radius: 10px; font-size: 11px; font-weight: 500; letter-spacing: .01em; }
 .legend li { display: flex; align-items: center; gap: 4px; }
 .legend svg { width: 20px; }
@@ -132,6 +132,9 @@ button:disabled { opacity: .5; cursor: default; }
 .route-sheet { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 0 12px var(--frame-bottom); border-radius: 18px 18px 0 0; box-shadow: 0 -3px 16px rgb(32 33 36 / 14%); }
 /* Straight grab bar. Drag or tap it to open or close the sheet. */
 .sheet-grab { flex: none; height: 20px; margin: 0 -12px; cursor: grab; touch-action: none; }
+/* The whole sheet is a drag surface; when open, the details scroll natively. */
+.route-sheet { touch-action: none; }
+.route-sheet:not(.route-sheet--collapsed) .sheet-body { touch-action: pan-y; }
 .sheet-grab::after { content: ""; display: block; width: 36px; height: 5px; margin: 8px auto 0; border-radius: 3px; background: rgb(32 33 36 / 30%); }
 .sheet-grab:active { cursor: grabbing; }
 .sheet-grab:hover::after, .sheet-grab:active::after, .sheet-grab:focus-visible::after { background: rgb(32 33 36 / 50%); }
@@ -187,7 +190,7 @@ button:disabled { opacity: .5; cursor: default; }
 /* Floating cards: street details, off-route prompt, status toast. No scrim: the map stays usable. */
 /* Same gap below the floating cards as above the top cards, and the same side margins. */
 .float-card, .toast { margin: 0 var(--side-gap) var(--bottom-gap); padding: 8px 10px; border-radius: 16px; }
-.toast { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; line-height: 1.35; }
+.toast { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 12px 12px 16px; font-size: 12px; line-height: 1.35; }
 .toast--warn { color: #7a3d08; }
 .toast:has(+ .find-bar) { margin-bottom: 6px; }
 .find-bar { padding: 0 var(--side-gap) var(--bottom-gap); }

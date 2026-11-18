@@ -167,6 +167,14 @@ export default function App() {
   // Routes are computed only when the user asks (Find routes). Changing the start, destination
   // or time clears old results; accepting a reroute during a walk computes straight away.
   const autoComputeRef = useRef(false);
+  // Swiping the route sheet away: hide the routes but keep the trip, so Find routes is one tap away.
+  const dismissResults = useCallback(() => {
+    requestCounter.current += 1;
+    setData(null);
+    setStatus("idle");
+    setError("");
+  }, []);
+
   useEffect(() => {
     if (autoComputeRef.current) {
       autoComputeRef.current = false;
@@ -410,6 +418,7 @@ export default function App() {
           onRetry={loadRoutes}
           canFind={Boolean(start && destination)}
           onFind={loadRoutes}
+          onClose={dismissResults}
           walk={walk}
           onStartWalk={startWalk}
           onStopWalk={stopWalk}

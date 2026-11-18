@@ -88,11 +88,32 @@ cloudflared tunnel --url http://127.0.0.1:4173
    - why a route section is labelled sunny, shaded, covered or shade unknown
    - the street's walkability, with buttons to rate it 1–5
    - a button to mark the highlighted stretch as a covered walkway, or remove the mark
-6. Open **Best time to leave, live walk and details** to see:
+6. Swipe the route sheet up (from anywhere on it) to see the details, and swipe it down again to collapse it. Swiping the collapsed sheet down hides the routes but keeps the trip, so **Find routes** brings them back. The sheet shows:
    - the sun share now, in 15 minutes and in 30 minutes
    - **Start**, which begins the walk. With a GPS fix the app switches to navigation: a banner with the next turn and its distance, a map that follows you and rotates in your direction of travel, and a bar with time and distance left and the sun on the rest of the route. Without GPS the walk shows "Locating…" and keeps the normal view.
 
 The temperature and heat index in the top bar are weather readings for context only. They never change routes or scores.
+
+### When a shadier route is offered
+
+The app always searches for a shadier route, but shows one only when it finds a better one. Otherwise the sheet says "No shadier alternative was found for this trip at this time."
+
+**How the shadier route is chosen** (`exposure_cost` and `SHADIER_SUN_WEIGHT = 3` in `backend/app.py`):
+
+- **The search:** it finds the path with the lowest score, where a **shaded** or **covered** metre scores **1** and a **sunny** or **shade-unknown** metre scores **3**. In other words, each sunny metre avoided can pay for up to 2 extra metres of walking in shade. There is no fixed limit on extra distance.
+- **The check:** the result is shown only if it is a **different path** from the shortest route and its **sun % is lower**. The comparison uses the percentage, so a longer detour can have a lower sun % but a similar number of minutes in the sun. The cards show both figures.
+
+For example, if the shortest route is 500 m and all in sun (score 1,500), a fully shaded detour is offered if it is under 1,500 m. If the shortest route is already fully shaded, nothing can beat it.
+
+**Common reasons only the shortest route appears:**
+
+- **The sun is down or very low.** Every section counts as shaded, so the shortest route is already 0% sun.
+- **The shortest route is already the shadiest.**
+- **No detour pays off.** On short trips, or where there is only one path, a detour adds more walking than it saves in sun.
+- **The trip is outside Quezon City.** There is no building-height data there, so every route is about 100% "shade unknown", counted as sun, and none can beat the shortest.
+- **It is around midday.** With the sun overhead, buildings cast short shadows. Mid-morning and mid-afternoon give more chances for a shadier route.
+
+The weight of 3 is a design choice, not a PRD value. The PRD requires only that the shadier route has less sun exposure (F-04) and that weather and walkability never affect it. A higher weight accepts longer detours for shade. A lower one offers shadier routes less often but keeps them closer in length to the shortest.
 
 ### Testing location without a phone
 
