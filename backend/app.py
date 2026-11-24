@@ -1,4 +1,4 @@
-"""HTTP API for the Katipunan shade-routing prototype (Python standard library only)."""
+"""HTTP API for the Shades shade-routing prototype (Python standard library only)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from area import HOME, MAX_TRIP_M, MAX_WALK_M, STUDY_AREA, in_study_area
 from places import PlaceIndex
 from routing import WalkingGraph, edge_key, haversine_meters
 from shade import WALKING_SPEED_M_PER_MIN, ExposureModel, HeightRaster, analyze_route, shift_time
-from storage import DEFAULT_PATH, Store, route_walkability, street_score
+from storage import StoreError, open_store, route_walkability, street_score
 from tiles import TileStore
 from weather import fetch_weather
 
@@ -47,11 +47,24 @@ def is_in_study_area(latitude: float, longitude: float) -> bool:
     return in_study_area(latitude, longitude)
 
 
-STORE = Store(Path(os.environ.get("SHADES_DB", DEFAULT_PATH)))
+STORE = open_store()
+SAVE_FAILED = "Ratings and covered marks can't be saved right now. Please try again."
 
 
 def covered_edges_provider() -> set[str]:
-    return STORE.covered_edges()
+    """Covered marks, or none when the store is unreachable, so routes still work."""
+    try:
+        return STORE.covered_edges()
+    except StoreError:
+        return set()
+
+
+def rating_stats(way_ids: list[int]) -> dict[int, tuple[int, float]] | None:
+    """Ratings per street, or None when the store is unreachable."""
+    try:
+        return STORE.rating_stats(way_ids)
+    except StoreError:
+        return None
 
 
 class RouteError(Exception):
@@ -164,7 +177,7 @@ def build_routes(start: tuple[float, float], destination: tuple[float, float], t
     if len(routes) == 1:
         note = "No shadier alternative was found for this trip at this time."
     # Walkability is shown for information only, after the routes are chosen (PRD S-09, C-02).
-    stats = STORE.rating_stats([edge["way_id"] for route in routes for edge in route["edges"]])
+    stats = rating_stats([edge["way_id"] for route in routes for edge in route["edges"]])
     for route in routes:
         route["walkability"] = route_walkability(route["edges"], stats)
     return {
@@ -194,7 +207,8 @@ def create_route_response(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]
         return 422, {"error": str(error)}
 
     # Weather is fetched after routing and never feeds back into it (PRD F-07, F-10, F-11).
-    weather = fetch_weather(start[0], start[1], str(travel_time))
+    # The exact start is never shared with the weather service (C-04): rounded to about 11 km.
+    weather = fetch_weather(round(start[0], 1), round(start[1], 1), str(travel_time))
     return 200, {
         "study_area": STUDY_AREA,
         "travel_time": travel_time,
@@ -218,22 +232,28 @@ def create_weather_response(query: dict[str, list[str]]) -> tuple[int, dict[str,
     return 200, {"travel_time": travel_time, "weather": fetch_weather(STUDY_CENTER[0], STUDY_CENTER[1], travel_time)}
 
 
-def create_places_response(query: dict[str, list[str]]) -> tuple[int, dict[str, Any]]:
-    """Place search; near=lat,lon ranks same-named places (chain stores) by distance.
+def create_places_response(payload: Any) -> tuple[int, dict[str, Any]]:
+    """Place search; `near` ({latitude, longitude}) ranks same-named places (chain stores) by distance.
 
-    Without it, results rank from HOME (Katipunan), where the map opens.
+    Without it, results rank from HOME (Katipunan), where the map opens. It is a POST because
+    hosts log query strings, and points must stay out of logs. The frontend never sends the
+    user's own position here (PRD C-04).
     """
+    payload = payload if isinstance(payload, dict) else {}
     try:
-        lat_text, lon_text = (query.get("near") or [""])[0].split(",")
-        near = (float(lat_text), float(lon_text))
+        near = validate_point(payload.get("near"), "near point")
     except ValueError:
         near = HOME
-    return 200, {"places": PLACE_INDEX.search((query.get("q") or [""])[0], near=near)}
+    return 200, {"places": PLACE_INDEX.search(str(payload.get("q") or ""), near=near)}
 
 
 def street_payload(way_id: int) -> dict[str, Any]:
-    count, average = STORE.rating_stats([way_id]).get(way_id, (0, None))
-    return {"way_id": way_id, "name": WALKING_GRAPH.way_names.get(way_id, "Street"), "walkability": {"basis": "user ratings", **street_score(count, average)}}
+    stats = rating_stats([way_id])
+    if stats is None:
+        score = {"status": "not available", "rating_count": None, "average": None}
+    else:
+        score = street_score(*stats.get(way_id, (0, None)))
+    return {"way_id": way_id, "name": WALKING_GRAPH.way_names.get(way_id, "Street"), "walkability": {"basis": "user ratings", **score}}
 
 
 def create_street_response(way_id: int) -> tuple[int, dict[str, Any]]:
@@ -242,17 +262,16 @@ def create_street_response(way_id: int) -> tuple[int, dict[str, Any]]:
     return 200, street_payload(way_id)
 
 
-def create_nearest_street_response(query: dict[str, list[str]]) -> tuple[int, dict[str, Any]]:
-    """Street section closest to a tapped map point (the tap, not the user's location)."""
+def create_nearest_street_response(payload: Any) -> tuple[int, dict[str, Any]]:
+    """Street section closest to a tapped map point. A POST, so the point stays out of URL logs (C-04)."""
     try:
-        latitude = float((query.get("lat") or [""])[0])
-        longitude = float((query.get("lon") or [""])[0])
-    except ValueError:
-        return 400, {"error": "lat and lon must be numbers"}
-    edge = WALKING_GRAPH.nearest_edge((latitude, longitude))
+        point = validate_point(payload, "point")
+    except ValueError as error:
+        return 400, {"error": str(error)}
+    edge = WALKING_GRAPH.nearest_edge(point)
     if edge is None:
         return 404, {"error": "No street or path here. Tap closer to a street."}
-    covered = edge["edge_key"] in STORE.covered_edges()
+    covered = edge["edge_key"] in covered_edges_provider()
     return 200, {**street_payload(edge["way_id"]), "section": {**edge, "covered": covered}}
 
 
@@ -263,11 +282,13 @@ def create_rating_response(way_id: int, payload: Any) -> tuple[int, dict[str, An
         STORE.add_rating(way_id, payload.get("rating") if isinstance(payload, dict) else None)
     except ValueError as error:
         return 400, {"error": str(error)}
+    except StoreError:
+        return 503, {"error": SAVE_FAILED}
     return 200, street_payload(way_id)
 
 
 def create_covered_list_response() -> tuple[int, dict[str, Any]]:
-    sections = [WALKING_GRAPH.edge_from_key(key) for key in sorted(STORE.covered_edges())]
+    sections = [WALKING_GRAPH.edge_from_key(key) for key in sorted(covered_edges_provider())]
     return 200, {"covered": [section for section in sections if section]}
 
 
@@ -275,7 +296,10 @@ def create_covered_update_response(key: str, covered: bool) -> tuple[int, dict[s
     section = WALKING_GRAPH.edge_from_key(key)
     if section is None:
         return 404, {"error": "That street section is not on the walking network."}
-    STORE.set_covered(key, covered)
+    try:
+        STORE.set_covered(key, covered)
+    except StoreError:
+        return 503, {"error": SAVE_FAILED}
     return 200, {**section, "covered": covered}
 
 
@@ -315,10 +339,6 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"status": "ok", "study_area": STUDY_AREA})
         elif parsed.path == "/api/weather":
             self._send_json(*create_weather_response(query))
-        elif parsed.path == "/api/places":
-            self._send_json(*create_places_response(query))
-        elif parsed.path == "/api/streets/nearest":
-            self._send_json(*create_nearest_street_response(query))
         elif parsed.path.startswith("/api/streets/") and parse_way_id(parsed.path.rsplit("/", 1)[1]) is not None:
             self._send_json(*create_street_response(parse_way_id(parsed.path.rsplit("/", 1)[1])))
         elif parsed.path == "/api/covered":
@@ -336,6 +356,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         parts = path.strip("/").split("/")
         if path == "/api/routes":
             self._send_json(*create_route_response(payload))
+        elif path == "/api/places":
+            self._send_json(*create_places_response(payload))
+        elif path == "/api/streets/nearest":
+            self._send_json(*create_nearest_street_response(payload))
         elif len(parts) == 4 and parts[:2] == ["api", "streets"] and parts[3] == "ratings" and parse_way_id(parts[2]) is not None:
             self._send_json(*create_rating_response(parse_way_id(parts[2]), payload))
         else:

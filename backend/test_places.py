@@ -7,7 +7,7 @@ from weather import build_weather
 
 class PlaceSearchTests(unittest.TestCase):
     def test_finds_known_campus_places_inside_study_area(self):
-        status, response = app.create_places_response({"q": ["rizal"]})
+        status, response = app.create_places_response({"q": "rizal"})
         self.assertEqual(status, 200)
         names = [place["name"] for place in response["places"]]
         self.assertIn("Rizal Library", names)
@@ -40,12 +40,19 @@ class PlaceSearchTests(unittest.TestCase):
             return abs(place["latitude"] - point[0]) + abs(place["longitude"] - point[1])
         self.assertLess(distance(near_katipunan[0], katipunan), distance(near_makati[0], katipunan))
         self.assertLess(distance(near_makati[0], makati), distance(near_katipunan[0], makati))
-        status, response = app.create_places_response({"q": ["7-Eleven"], "near": ["14.6400,121.0750"]})
+        status, response = app.create_places_response({"q": "7-Eleven", "near": {"latitude": 14.6400, "longitude": 121.0750}})
         self.assertEqual((status, response["places"][0]["id"]), (200, near_katipunan[0]["id"]))
 
     def test_short_or_empty_query_returns_nothing(self):
-        self.assertEqual(app.create_places_response({"q": ["r"]})[1]["places"], [])
+        self.assertEqual(app.create_places_response({"q": "r"})[1]["places"], [])
         self.assertEqual(app.create_places_response({})[1]["places"], [])
+
+    def test_malformed_input_is_safe(self):
+        for payload in (None, [], {"q": None}, {"q": ["rizal"], "near": "14.64,121.07"}, {"q": 5}):
+            with self.subTest(payload=payload):
+                self.assertEqual(app.create_places_response(payload)[0], 200)
+        status, response = app.create_places_response({"q": "rizal", "near": {"latitude": float("nan"), "longitude": 121.07}})
+        self.assertEqual((status, response["places"][0]["name"]), (200, "Rizal Library"))
 
     def test_place_can_be_used_as_a_route_destination(self):
         place = app.PLACE_INDEX.search("Rizal Library")[0]

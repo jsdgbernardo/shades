@@ -127,7 +127,7 @@ class CoveredTests(TempStoreCase):
         self.assertEqual(app.create_covered_update_response("garbage", True)[0], 404)
 
     def test_nearest_street_to_a_tap(self):
-        status, response = app.create_nearest_street_response({"lat": ["14.6407"], "lon": ["121.0748"]})
+        status, response = app.create_nearest_street_response({"latitude": 14.6407, "longitude": 121.0748})
         self.assertEqual(status, 200)
         self.assertIn("edge_key", response["section"])
         self.assertFalse(response["section"]["covered"])

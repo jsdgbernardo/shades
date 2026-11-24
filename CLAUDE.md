@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Shades is a phone-first web app that gives shade-aware walking routes for the Katipunan / Ateneo de Manila University area of Quezon City. It is a Python API (`backend/`) plus a React + Vite + Leaflet single-page frontend (`frontend/`).
+Shades is a phone-first web app that gives shade-aware walking routes across Metro Manila (building heights cover Quezon City only). It is a Python API (`backend/`) plus a React + Vite + MapLibre single-page frontend (`frontend/`).
 
 ## Current direction (read before changing anything)
 
@@ -43,7 +43,7 @@ The tests import `app` as a top-level module, so they must run with `backend/` o
 The map data is prebuilt and committed (`datasets/tiles/`, `datasets/derived/`). Rebuild it only when the OSM source changes. This needs the Geofabrik Philippines PBF in `datasets/raw/` (gitignored) and pyosmium, a build-only dependency, under Python 3.13:
 
 ```powershell
-py -3.13 -m pip install osmium; py -3.13 backenduild_tiles.py    # ~3–4 min; see datasets/README.md
+py -3.13 -m pip install osmium; py -3.13 backend\build_tiles.py    # ~3–4 min; see datasets/README.md
 ```
 
 ```powershell
@@ -64,8 +64,9 @@ cd frontend; npm run build
 - `build_tiles.py` (build only, pyosmium): streams the PBF and writes:
   - `datasets/tiles/{col}_{row}.json.gz`: walkable nodes, directed edges `[a, b, length, way]` (each in its start node's tile) and way labels
   - `datasets/derived/places.db` (FTS5), `unknown-height-cells.bin` (D-01) and `build-info.json` (counts)
+  - `datasets/derived/ways.db` (way → tiles), through `build_ways.py`, which can also rebuild it from the committed tiles alone
   - Indoor edges (C-01) and disconnected fragments under 200 nodes are dropped here.
-- `tiles.py`: `TileStore` loads tiles lazily into an LRU cache and answers `neighbors`, `nodes_near` and `edges_near`.
+- `tiles.py`: `TileStore` loads tiles lazily into an LRU cache and answers `neighbors`, `nodes_near` and `edges_near`. `tiles_of_way` uses `ways.db` to load a street's tiles, so saved ratings and marks resolve right after a restart.
 - `osm.py`: only `is_enclosed_ground_building` and `FootprintIndex`, used by the build.
 - `shade.py`:
   - A hand-written GeoTIFF reader (tiled, PackBits, float32), with NaN meaning unknown height.
@@ -85,17 +86,18 @@ cd frontend; npm run build
   - Edges through enclosed ground-level OSM buildings are dropped at build time (C-01; `osm.is_enclosed_ground_building`, `FootprintIndex`). Open roofs, raised buildings and `tunnel=building_passage` ways stay walkable.
 - `app.py`:
   - Trips over 10 km straight-line are refused, and points with no path within 400 m get a message.
-  - **Shortest route:** cost = length, search limited to 2.5 × straight-line + 1 km.
+  - **Shortest route:** cost = length, search limited to 3 × straight-line + 5 km, up to `MAX_WALK_M` (15 km).
   - **Shadier route:** cost = shaded + 3 × (sun + unknown), via `exposure_cost`, limited to 3 × the shortest route's length (lossless). It is returned only if its sun % is lower.
   - Each route also gets:
     - `comparison` (F-09)
     - `comfort_window`: +0/+15/+30 min, with `recommend()` saying "wait" only if a later time is at least 5 points lower (F-15)
     - `walkability`, computed after the routes are chosen
-  - Weather is fetched after routing.
+  - Weather is fetched after routing, for the start rounded to 0.1° (C-04).
+  - Points travel only in POST bodies, never in URLs, because hosts log URLs (C-04).
   - `log_message` is silenced so locations are never logged (C-04).
 - `weather.py`: Open-Meteo hourly UV, temperature and humidity, plus an NWS heat index. Each reading is `{"status": "available"|"not available"}`. Failures are not cached.
 - `places.py`: offline FTS5 search over `places.db` (prefix matches first, then by distance to the other trip point via `near=lat,lon`).
-- `storage.py`: SQLite in `data/shades.db` (gitignored), opening one connection per call because the server is threaded. Streets with fewer than 3 ratings show "not enough ratings". Route walkability is the length-weighted average over rated streets.
+- `storage.py`: `open_store()` picks `TursoStore` (hosted SQLite over https with `urllib`) when `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, `NoStore` on Vercel without them, and otherwise `Store`: SQLite in `data/shades.db` (gitignored), one connection per call because the server is threaded. When the store raises `StoreError`, routes still work and saves return 503. Streets with fewer than 3 ratings show "not enough ratings". Route walkability is the length-weighted average over rated streets.
 
 **Frontend** (`frontend/src/`):
 - `App.jsx` holds all state:
@@ -107,13 +109,16 @@ cd frontend; npm run build
   - map taps: start and destination are set only by search or GPS. A tap on a route section or a street calls `/api/streets/nearest` and opens `StreetModal` (`components/StreetPanel.jsx`), which shows the section reason, rating and covered toggle. This follows PRD S-02.
   - covered marks: not drawn on their own. They show only as `covered` sections of a generated route, plus the one section open in the street card (so a new mark is visible on save, S-10).
   - routes are computed only on "Find routes" (or an accepted reroute); changing start, destination or time clears results
-- `components/MapView.jsx` wraps raw Leaflet:
+- `components/MapView.jsx` wraps MapLibre GL with the OpenFreeMap vector style:
   - Section styles differ by pattern as well as colour (S-04).
   - Taps go to `onTap(latlng, section | null)` (I-01).
 - `components/RouteSheet.jsx` is the whole bottom stack: the legend and locate row, then a drag sheet (peek ↔ expanded, physics in `lib/spring.js` per SKILL.md) or an `overlay` card (street details, off-route prompt) that replaces it. Keep the UI compact and free of how-to text; the user wants most of the map visible at all times.
-- **Navigation mode** (walk + GPS fix): `lib/nav.js` derives manoeuvres from route geometry (bearing change ≥ 30° over ±12 m, merged within 15 m; street names only when the API edge has `named: true`) and the course-up heading. `App.jsx` swaps the top cards for `NavBanner` and the sheet for `NavBar` (`components/NavPanel.jsx`). `MapView` follows the user and rotates by resizing the map element to a square that covers the phone at any angle, centred 60% down, and rotating it with CSS; panning and taps are off while navigating, but pinch, double-tap and wheel zoom stay on in Leaflet's `"center"` mode (zooms around the map centre, which is the user; rotation-safe), and the user's zoom is kept across GPS updates. GPS denied or unavailable (not timeout) drops back to the normal sheet.
+- **Navigation mode** (walk + GPS fix): `lib/nav.js` derives manoeuvres from route geometry (bearing change ≥ 30° over ±12 m, merged within 15 m; street names only when the API edge has `named: true`) and the course-up heading. `App.jsx` swaps the top cards for `NavBanner` and the sheet for `NavBar` (`components/NavPanel.jsx`). `MapView` follows the user, 60% down the screen, and turns with MapLibre's native bearing so labels stay upright; panning and taps are off while navigating, but zooming stays on around the user, and the user's zoom is kept across GPS updates. GPS denied or unavailable (not timeout) drops back to the normal sheet.
+- Place search never sends a GPS point as `near` (C-04).
 - `lib/geo.js` projects a position onto the route and computes the remaining figures client-side (F-13).
 - `lib/location.js` handles geolocation errors and accuracy (E-04) and contains the dev simulator.
+
+**Hosting** (Vercel Hobby, README "Use on your phone without a laptop"): `vercel.json` builds the frontend and rewrites `/api/*` to `api/index.py`, whose `handler` subclasses `app.RequestHandler` and restores the client's path. The bundle has only the files in `includeFiles`; add any new runtime data file there. The disk is read-only, Python is 3.13, and instances start cold, so never rely on state from an earlier request.
 
 **Data** (`datasets/`): built from the Geofabrik Philippines extract clipped to Metro Manila (ODbL, see `datasets/README.md`). Building heights cover Quezon City only; elsewhere shade is unknown and counts as sun (accepted). Height rasters exist for 2016–2030, but only 2026 is used.
 

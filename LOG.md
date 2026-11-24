@@ -958,3 +958,34 @@ The test area grows from the 2 km Katipunan box to Metro Manila (S 14.35, N 14.7
 - **Not verified:**
   - The "?" markers on unknown sections in the browser.
   - Use on a phone.
+
+## 2026-11-24: Ready to run on Vercel, with fixes to long routes, restarts and location privacy
+
+The app can now run without the laptop: the website and the Python API on Vercel, ratings and covered marks in Turso (hosted SQLite). It is **not deployed yet**.
+
+### Problems found and fixed
+
+- **Long routes missed P-01.** A 9.7 km trip took 10 to 15 s. The 2026-11-18 acceptance run sampled trips of 300–1500 m and its timings stopped at 4.5 km, so neither showed this. `ExposureModel.classify_point` now skips stretches of a sight line that no building can reach. `test_shade_speed.py` compares it with a copy of the old algorithm.
+- **Ratings and covered marks failed after a restart (D-03).** Since the 2026-11-18 tile change, a street was found only if its tile was already loaded, so saving returned 404 and `/api/covered` dropped marks. `datasets/derived/ways.db` (157,738 ways, 2.2 MB, from `build_ways.py`) now says which tiles to load.
+- **Location privacy (C-04):**
+  - The exact start was sent to the weather service. It is now rounded to 0.1° (about 11 km).
+  - `/api/places` and `/api/streets/nearest` carried points in URLs, which hosts log. They are now POST with a JSON body.
+  - Place search sent the GPS position as `near` when it was the other trip point. It no longer does, so with a GPS start the results rank from Katipunan.
+- **CLAUDE.md:** a corrupted build command, an out-of-date search limit and the old Leaflet description were corrected.
+
+### Added
+
+- **`storage.TursoStore`**, chosen when `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set. When the database cannot be reached, routes still work, walkability is "not available" and saves return 503. On Vercel without those settings, `NoStore` does the same.
+- **Vercel:** `api/index.py`, `vercel.json` (Singapore region), `.vercelignore`, `.python-version` (3.13).
+- **Home screen:** web manifest and icons, so the phone can open Shades full-screen.
+- **Time zone:** Manila time is a fixed UTC+8 in `area.py`, since a host may have no time-zone files.
+
+### Verification
+
+- **Backend:** 90 tests, OK on Python 3.10 and on 3.13.
+- **Frontend:** `npx vitest run` → 24 tests, OK. `npm run build` → OK.
+- **Bundle rehearsal:** a copy with only the files Vercel would get (38 MB), on Python 3.13 on this laptop, with no time-zone files and no database, over HTTP through `api/index.py`. Import 1.61 s. The weather lookup was live.
+  - The 9.7 km trip: 3.58 s with cold tiles, 3.15 s warm.
+  - 20 trips from 0.6 to 9.5 km apart, at 8:00, 10:00, 12:00 and 15:00: 20 of 20 within 10 s (median 2.11 s, max 4.55 s).
+- **Browser preview:** with a simulated GPS start, search, route and street card worked, with no console errors. The GPS point was sent only in `POST /api/routes`. A covered mark was still listed after the API was restarted, and was then removed.
+- **Not verified:** the real Turso service, the deployed site (including Vercel's path form, cold start, speed and logs), and use on a phone. P-01 is defined on a mobile connection, which these timings are not.

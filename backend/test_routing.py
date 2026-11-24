@@ -3,8 +3,9 @@ import unittest
 from unittest.mock import patch
 
 import app
-from routing import haversine_meters
+from routing import WalkingGraph, haversine_meters
 from shade import ExposureModel
+from tiles import TileStore
 
 TRAVEL_TIME = "2026-10-15T15:00:00+08:00"
 
@@ -142,6 +143,17 @@ class TiledGraphTests(unittest.TestCase):
         })
         self.assertEqual(status, 422)
         self.assertIn("Too far", response["error"])
+
+    def test_streets_are_found_before_their_tile_is_loaded(self):
+        """After a restart nothing is loaded, but saved ratings and marks must still resolve (D-03)."""
+        section = app.WALKING_GRAPH.nearest_edge((14.6407, 121.0748), max_distance_m=60)
+        fresh = WalkingGraph(TileStore())
+        self.assertEqual(fresh.edge_from_key(section["edge_key"]), section)
+        fresh = WalkingGraph(TileStore())
+        self.assertIn(section["way_id"], fresh.way_names)
+        self.assertEqual(fresh.way_name(section["way_id"]), section["name"])
+        self.assertNotIn(1, WalkingGraph(TileStore()).way_names)
+        self.assertIsNone(WalkingGraph(TileStore()).edge_from_key("1:2-3"))
 
     def test_search_limit_stops_without_a_path(self):
         graph = app.WALKING_GRAPH

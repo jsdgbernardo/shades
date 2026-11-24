@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from build_ways import build_ways  # noqa: E402
 from area import COORD_DECIMALS, STUDY_AREA, tile_of  # noqa: E402
 from osm import FootprintIndex, is_enclosed_ground_building  # noqa: E402
 from places import kind_of  # noqa: E402
@@ -238,6 +239,7 @@ def main() -> None:
     tiles = {key: tile for key, tile in tiles.items() if tile["edges"]}
     edge_count -= fragments
     size = write_tiles(tiles)
+    build_ways()
     print(f"  {len(tiles)} tiles, {edge_count} directed edges, {excluded} indoor edges dropped, {fragments} fragment edges dropped, {size / 1e6:.1f} MB ({time.time() - started:.0f} s)", flush=True)
 
     place_count = write_places(places)

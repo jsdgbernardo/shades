@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm ci --prefix frontend",
+  "buildCommand": "npm run build --prefix frontend",
+  "outputDirectory": "frontend/dist",
+  "regions": ["sin1"],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "includeFiles": "{backend/*.py,datasets/tiles/**,datasets/derived/**,datasets/building-heights/2026_HEIGHT_GVSSM.tif}",
+      "excludeFiles": "{frontend/**,backend/test_*.py}"
+    }
+  },
+  "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index?__path=$1" }]
+}

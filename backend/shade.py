@@ -16,17 +16,20 @@ from __future__ import annotations
 import math
 import struct
 from array import array
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
+
+from area import LOCAL_ZONE
 
 
 HEIGHT_PATH = Path(__file__).parents[1] / "datasets" / "building-heights" / "2026_HEIGHT_GVSSM.tif"
-LOCAL_ZONE = ZoneInfo("Asia/Manila")
 EYE_HEIGHT_M = 1.7
 SAMPLE_STEP_M = 2
 MAX_RAY_M = 200
+# Points share one list of samples worth checking per block of 2**BLOCK_SHIFT raster cells a side.
+BLOCK_SHIFT = 3
 PIECE_M = 10.0
 WALKING_SPEED_M_PER_MIN = 80.0
 SUN_LABELS = {"sun", "unknown"}
@@ -43,6 +46,7 @@ class HeightRaster:
         self.origin_lat = origin_lat
         self.pixel_size = pixel_size
         self.values = values
+        self.revision = 0  # changes whenever a method edits values, so block summaries can be rebuilt
         finite = [value for value in values if not math.isnan(value)]
         self.max_height = max(finite) if finite else 0.0
 
@@ -135,6 +139,7 @@ class HeightRaster:
         for index in cells:
             if index < size:
                 self.values[index] = math.nan
+        self.revision += 1
         return len(cells)
 
     def mark_unknown_footprints(self, footprints: list[list[tuple[float, float]]]) -> dict[str, int]:
@@ -157,6 +162,7 @@ class HeightRaster:
             without_height += 1
             for row, column in cells:
                 self.values[row * self.width + column] = math.nan
+        self.revision += 1
         return {"buildings": with_height + without_height, "with_height": with_height, "without_height": without_height}
 
     def _cells_in_polygon(self, ring: list[tuple[float, float]]) -> list[tuple[int, int]]:
@@ -239,6 +245,94 @@ def compass(azimuth: float) -> str:
     return COMPASS[int((azimuth % 360 + 22.5) // 45) % 8]
 
 
+class SightLines:
+    """Everything one model's sight lines share: the sample points, and which of them matter where.
+
+    For a block of raster cells, ``checks_for`` lists the samples that could meet a blocking building
+    or an unknown cell from any point in that block. The rest cannot change the result, so
+    ``classify_point`` skips them. Everything per block is computed when a sight line first needs it.
+    """
+
+    def __init__(self, raster: HeightRaster, elevation: float, azimuth: float) -> None:
+        self.raster = raster
+        tan_elevation = math.tan(math.radians(elevation))
+        # Beyond this distance even the tallest building in the raster cannot reach the sight line.
+        max_distance = min(MAX_RAY_M, (raster.max_height - EYE_HEIGHT_M) / tan_elevation)
+        toward_east = math.sin(math.radians(azimuth))
+        toward_north = math.cos(math.radians(azimuth))
+        # One (distance, north in degrees, east in metres, height of the sight line) per sample.
+        self.samples: list[tuple[float, float, float, float]] = []
+        distance = SAMPLE_STEP_M
+        while distance <= max_distance:
+            self.samples.append((distance, toward_north * distance / 111_320, toward_east * distance, EYE_HEIGHT_M + distance * tan_elevation))
+            distance += SAMPLE_STEP_M
+        self.sight_heights = [sample[3] for sample in self.samples]
+        self.reachable = self._reachable_blocks()
+        self.heights: dict[tuple[int, int], tuple[float, bool]] = {}
+        self.checks: dict[tuple[int, int], tuple[list, float]] = {}
+        self._lists: dict[int, list] = {}
+
+    def _reachable_blocks(self) -> list[tuple[int, int, int, int]]:
+        """(row offset, column offset, first sample, samples as bits) of every block a point's block can look into."""
+        raster = self.raster
+        size = 1 << BLOCK_SHIFT
+        # Shortest and longest degree of longitude over the raster's rows.
+        south = raster.origin_lat - raster.height * raster.pixel_size
+        cosines = [math.cos(math.radians(latitude)) for latitude in (raster.origin_lat, south)]
+        if south < 0 < raster.origin_lat:
+            cosines.append(1.0)
+        widths = [111_320 * max(min(cosines), 1e-6), 111_320 * max(cosines)]
+        blocks: dict[tuple[int, int], int] = {}
+        for index, (_, north_degrees, east_meters, _) in enumerate(self.samples):
+            rows = -north_degrees / raster.pixel_size
+            columns = [east_meters / width / raster.pixel_size for width in widths]
+            # Cells the sample can be in, counted from the block's first cell. The one-cell margin
+            # covers rounding and the truncation of cell numbers toward zero.
+            top, bottom = math.floor(rows) - 1, math.floor(size + rows) + 1
+            left, right = math.floor(min(columns)) - 1, math.floor(size + max(columns)) + 1
+            for block_row in range(top >> BLOCK_SHIFT, (bottom >> BLOCK_SHIFT) + 1):
+                for block_column in range(left >> BLOCK_SHIFT, (right >> BLOCK_SHIFT) + 1):
+                    blocks[block_row, block_column] = blocks.get((block_row, block_column), 0) | 1 << index
+        return [(row, column, (bits & -bits).bit_length() - 1, bits) for (row, column), bits in blocks.items()]
+
+    def _block_height(self, block: tuple[int, int]) -> tuple[float, bool]:
+        """Tallest known height in a block (-inf if none), and whether any of it is unknown or off the raster."""
+        raster = self.raster
+        size = 1 << BLOCK_SHIFT
+        top, left = block[0] << BLOCK_SHIFT, block[1] << BLOCK_SHIFT
+        first, last = max(left, 0), min(left + size, raster.width)
+        cells: list[float] = []
+        if first < last:
+            for row in range(max(top, 0), min(top + size, raster.height)):
+                cells.extend(raster.values[row * raster.width + first:row * raster.width + last])
+        known = [value for value in cells if value == value]
+        self.heights[block] = result = (max(known, default=-math.inf), len(known) < size * size)
+        return result
+
+    def checks_for(self, block: tuple[int, int]) -> tuple[list, float]:
+        """(samples to check, distance past which they matter only for unknown cells) for points in a block."""
+        block_row, block_column = block
+        heights = self.heights
+        sight_heights = self.sight_heights
+        bits = 0
+        building_bits = 0
+        for row, column, first, block_bits in self.reachable:
+            key = (block_row + row, block_column + column)
+            tallest, unknown = heights.get(key) or self._block_height(key)
+            if unknown:
+                bits |= block_bits
+            if tallest > sight_heights[first]:
+                # From this sample on, the sight line is above everything known in the block.
+                building_bits |= block_bits & (1 << bisect_left(sight_heights, tallest)) - 1
+        bits |= building_bits
+        checks = self._lists.get(bits)
+        if checks is None:
+            self._lists[bits] = checks = [sample for index, sample in enumerate(self.samples) if bits >> index & 1]
+        building_limit = self.samples[building_bits.bit_length() - 1][0] if building_bits else 0.0
+        self.checks[block] = result = (checks, building_limit)
+        return result
+
+
 @dataclass
 class ExposureModel:
     """Sun/shade classifier for one travel time. Results are memoized per segment."""
@@ -250,6 +344,9 @@ class ExposureModel:
     elevation: float = field(init=False)
     azimuth: float = field(init=False)
     _cache: dict = field(default_factory=dict, init=False, repr=False)
+    _lengths: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+    _lines: SightLines | None = field(default=None, init=False, repr=False, compare=False)
+    _lines_key: tuple | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.elevation, self.azimuth = solar_position(self.travel_time, self.latitude, self.longitude)
@@ -257,25 +354,33 @@ class ExposureModel:
     def classify_point(self, latitude: float, longitude: float) -> tuple[str, dict[str, float | str]]:
         if self.elevation <= 0:
             return "shaded", {"cause": "night"}
-        tan_elevation = math.tan(math.radians(self.elevation))
-        # Beyond this distance even the tallest building in the raster cannot reach the sight line.
-        max_distance = min(MAX_RAY_M, (self.raster.max_height - EYE_HEIGHT_M) / tan_elevation)
-        meters_per_degree_lat = 111_320
+        raster = self.raster
+        key = (raster, self.elevation, self.azimuth, raster.revision, raster.max_height)
+        if key != self._lines_key:
+            self._lines = SightLines(raster, self.elevation, self.azimuth)
+            self._lines_key = key
+        lines = self._lines
+        values = raster.values
+        width, height = raster.width, raster.height
+        origin_lon, origin_lat, pixel_size = raster.origin_lon, raster.origin_lat, raster.pixel_size
+        block = (int((origin_lat - latitude) / pixel_size) >> BLOCK_SHIFT, int((longitude - origin_lon) / pixel_size) >> BLOCK_SHIFT)
+        checks, building_limit = lines.checks.get(block) or lines.checks_for(block)
         meters_per_degree_lon = 111_320 * math.cos(math.radians(latitude))
-        toward_east = math.sin(math.radians(self.azimuth))
-        toward_north = math.cos(math.radians(self.azimuth))
         unknown = False
-        distance = SAMPLE_STEP_M
-        while distance <= max_distance:
-            height = self.raster.height_at(
-                latitude + toward_north * distance / meters_per_degree_lat,
-                longitude + toward_east * distance / meters_per_degree_lon,
-            )
-            if height is None:
+        for distance, north_degrees, east_meters, sight_height in checks:
+            if unknown and distance > building_limit:
+                break
+            # The same formula and truncation toward zero as HeightRaster.cell.
+            row = int((origin_lat - (latitude + north_degrees)) / pixel_size)
+            column = int((longitude + east_meters / meters_per_degree_lon - origin_lon) / pixel_size)
+            if 0 <= column < width and 0 <= row < height:
+                value = values[row * width + column]
+                if value > sight_height:
+                    return "shaded", {"cause": "building", "height_m": round(value, 1), "distance_m": distance}
+                if value != value:
+                    unknown = True
+            else:
                 unknown = True
-            elif height > EYE_HEIGHT_M + distance * tan_elevation:
-                return "shaded", {"cause": "building", "height_m": round(height, 1), "distance_m": distance}
-            distance += SAMPLE_STEP_M
         return ("unknown", {"cause": "no_height"}) if unknown else ("sun", {"cause": "open"})
 
     def segment_pieces(self, first: list[float], second: list[float]) -> list[dict]:
@@ -297,12 +402,21 @@ class ExposureModel:
 
     def segment_lengths(self, first: list[float], second: list[float]) -> tuple[float, float]:
         """(shaded length, sun-or-unknown length) of one segment, for route cost."""
+        # The search asks this for every edge it reaches, so it skips building the pieces themselves.
+        key = (tuple(first), tuple(second))
+        if key in self._lengths:
+            return self._lengths[key]
+        length = distance_meters(first[1], first[0], second[1], second[0])
+        count = max(1, math.ceil(length / PIECE_M))
+        piece_length = length / count
         shaded = exposed = 0.0
-        for piece in self.segment_pieces(first, second):
-            if piece["label"] in SUN_LABELS:
-                exposed += piece["length_m"]
+        for index in range(count):
+            midpoint = interpolate(first, second, (index + 0.5) / count)
+            if self.classify_point(midpoint[1], midpoint[0])[0] in SUN_LABELS:
+                exposed += piece_length
             else:
-                shaded += piece["length_m"]
+                shaded += piece_length
+        self._lengths[key] = (shaded, exposed)
         return shaded, exposed
 
 

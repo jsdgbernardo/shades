@@ -41,12 +41,13 @@ export function fetchWeather(travelTime) {
 
 /** Place search; `near` ({latitude, longitude}) ranks same-named places (chain stores) by distance. */
 export function searchPlaces(query, near = null) {
-  const nearParam = near ? `&near=${near.latitude.toFixed(4)},${near.longitude.toFixed(4)}` : "";
-  return request(`/api/places?q=${encodeURIComponent(query)}${nearParam}`);
+  // POST, like every request that carries a point: hosts log URLs, and locations must not be logged (C-04).
+  const point = near && { latitude: Number(near.latitude.toFixed(4)), longitude: Number(near.longitude.toFixed(4)) };
+  return request("/api/places", { method: "POST", body: JSON.stringify({ q: query, near: point }) });
 }
 
 export function fetchNearestStreet(latitude, longitude) {
-  return request(`/api/streets/nearest?lat=${latitude}&lon=${longitude}`);
+  return request("/api/streets/nearest", { method: "POST", body: JSON.stringify({ latitude, longitude }) });
 }
 
 export function rateStreet(wayId, rating) {

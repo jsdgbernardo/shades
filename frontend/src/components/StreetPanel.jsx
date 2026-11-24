@@ -3,6 +3,7 @@ import { LABEL_TEXT, formatDistance } from "../lib/format.js";
 
 export function walkabilityText(walkability) {
   if (!walkability) return "";
+  if (walkability.status === "not available") return "Ratings not available";
   if (walkability.status === "rated") return `${walkability.average.toFixed(1)}/5 · ${walkability.rating_count} user ratings`;
   return `${walkability.rating_count}/3 user ratings`;
 }

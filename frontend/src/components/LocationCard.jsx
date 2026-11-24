@@ -22,7 +22,8 @@ function Field({ field, point, other, active, onActivate, onPick, onUseLocation,
     }
     const timer = setTimeout(() => {
       // Rank results near the other end of the trip, so "7-Eleven" finds the branch close by.
-      searchPlaces(query.trim(), other)
+      // The user's own position is never sent for this: only route requests may carry it (C-04).
+      searchPlaces(query.trim(), other?.source === "gps" ? null : other)
         .then((payload) => { setResults(payload.places ?? []); setSearchError(""); })
         .catch((error) => { setResults([]); setSearchError(error.message); });
     }, 200);

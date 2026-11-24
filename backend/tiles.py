@@ -17,13 +17,16 @@ from __future__ import annotations
 import gzip
 import json
 import math
+import sqlite3
 import threading
 from collections import OrderedDict
+from contextlib import closing
 from pathlib import Path
 
 from area import tile_of
 
 TILES_DIR = Path(__file__).parents[1] / "datasets" / "tiles"
+WAYS_DB = Path(__file__).parents[1] / "datasets" / "derived" / "ways.db"  # way -> tiles (build_ways.py)
 GRID_DEG = 0.001  # ~110 m buckets for nearest-node / nearest-edge lookups inside a tile
 
 
@@ -39,8 +42,9 @@ class Tile:
 
 
 class TileStore:
-    def __init__(self, directory: Path = TILES_DIR, capacity: int = 96) -> None:
+    def __init__(self, directory: Path = TILES_DIR, capacity: int = 96, ways_db: Path = WAYS_DB) -> None:
         self.directory = Path(directory)
+        self.ways_db = Path(ways_db)
         self.capacity = capacity
         self.coordinates: dict[int, tuple[float, float]] = {}
         self._tiles: OrderedDict[tuple[int, int], Tile | None] = OrderedDict()
@@ -85,7 +89,19 @@ class TileStore:
         for tile in list(self._tiles.values()):
             if tile is not None and way_id in tile.ways:
                 return tile.ways[way_id]
+        for tile in self.tiles_of_way(way_id):
+            if way_id in tile.ways:
+                return tile.ways[way_id]
         return None
+
+    def tiles_of_way(self, way_id: int) -> list[Tile]:
+        """Every tile with an edge of this way, loading them if needed (a saved rating or covered
+        mark can name a street no request has reached yet, e.g. right after a restart)."""
+        if not self.ways_db.exists():
+            return []
+        with closing(sqlite3.connect(f"{self.ways_db.resolve().as_uri()}?mode=ro&immutable=1", uri=True)) as connection:
+            keys = connection.execute("SELECT col, row FROM way_tiles WHERE way_id = ?", (way_id,)).fetchall()
+        return [tile for tile in map(self.tile, keys) if tile is not None]
 
     def tiles_around(self, latitude: float, longitude: float, ring: int = 1):
         column, row = tile_of(round(latitude, 7), round(longitude, 7))

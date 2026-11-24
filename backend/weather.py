@@ -12,11 +12,10 @@ import math
 from datetime import datetime
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-from zoneinfo import ZoneInfo
 
+from area import LOCAL_ZONE
 
 API_URL = "https://api.open-meteo.com/v1/forecast"
-LOCAL_ZONE = ZoneInfo("Asia/Manila")
 SOURCE = "Open-Meteo"
 _CACHE: dict[tuple[float, float, str], dict[str, object]] = {}
 

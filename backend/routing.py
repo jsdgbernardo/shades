@@ -240,6 +240,8 @@ class WalkingGraph:
             way_id = int(way_text)
         except ValueError:
             return None
+        if first not in self.coordinates or second not in self.coordinates:
+            self.store.tiles_of_way(way_id)
         if self.edge_ways.get((first, second)) != way_id and self.edge_ways.get((second, first)) != way_id:
             return None
         return {

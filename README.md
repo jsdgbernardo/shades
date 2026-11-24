@@ -46,7 +46,30 @@ On a desktop-sized browser, the app is displayed inside a virtual phone frame so
 
 Press `Ctrl+C` in each terminal running the backend and frontend.
 
-## Use on your phone (any network)
+## Use on your phone without a laptop (Vercel)
+
+The whole app runs on Vercel's free Hobby plan: the website, plus the Python API as one function (`api/index.py`, configured in `vercel.json`). Ratings and covered marks are kept in a free Turso database, because Vercel does not keep files.
+
+One-time setup:
+
+1. **Turso** ([turso.tech](https://turso.tech)): create a database in the closest region offered. Copy its URL (`libsql://…`) and create a token for it.
+2. **Vercel** ([vercel.com](https://vercel.com)): sign in with GitHub and import this repository. Keep the settings it reads from `vercel.json`.
+3. In the Vercel project, open **Settings → Environment Variables** and add these two, then redeploy:
+   - `TURSO_DATABASE_URL`: the Turso URL
+   - `TURSO_AUTH_TOKEN`: the Turso token (a secret; never commit it)
+4. In **Settings → Deployment Protection**, make sure the production link does not ask visitors to log in.
+5. On the phone, open the `https://….vercel.app` link and choose **Add to Home Screen**. Shades then opens full-screen like an app. It still needs internet.
+
+Good to know:
+
+- **Updates:** every push to `main` redeploys.
+- **First open:** after a quiet period the first request is slower while the server starts.
+- **Without Turso:** routes still work, but ratings show "not available" and cannot be saved.
+- **Limits:** the Hobby plan includes 4 CPU-hours a month. Beyond its limits the app is paused.
+- **Anyone with the link can use it** and add ratings or covered marks.
+- **Privacy:** Vercel logs request URLs, so points are sent only in request bodies.
+
+## Use on your phone through your laptop (any network)
 
 A free Cloudflare Quick Tunnel gives the app a public https link that works over mobile data. No account is needed. Phones only share GPS with https pages, so the tunnel also enables the location features.
 
@@ -75,7 +98,7 @@ cloudflared tunnel --url http://127.0.0.1:4173
 - **Keep the laptop running:** it must stay on and awake while you use the phone.
 - **New link each time:** the link changes whenever the tunnel restarts.
 - **Anyone can use it:** anyone with the link can open the app and add ratings or covered marks, so press `Ctrl+C` in the tunnel terminal when you're done.
-- **Privacy:** traffic is encrypted to Cloudflare. As everywhere in the app, your location is sent only inside route requests and is never logged.
+- **Privacy:** traffic is encrypted to Cloudflare. Your location is sent only inside route requests and is never logged.
 - **Restart old API copies:** if an older copy of the API is still running on port 8000, stop it and start it again so the phone gets the current version.
 
 ## Use the prototype
@@ -127,8 +150,8 @@ In development, open `http://127.0.0.1:5173/?simulate-location`. Then use the br
 | --- | --- |
 | `POST /api/routes` | Takes `{start, destination, travel_time}` and returns the routes, sections, comparison, comfort window, weather and walkability. |
 | `GET /api/weather?time=` | UV, temperature, humidity and heat index for the study area. Each reading is either available or not available. |
-| `GET /api/places?q=` | Searches named places in the local OSM extract. |
-| `GET /api/streets/nearest?lat=&lon=` | The street section nearest to a tapped point, with its walkability. |
+| `POST /api/places` | Takes `{q, near?}` and searches named places in the local OSM extract. |
+| `POST /api/streets/nearest` | Takes `{latitude, longitude}` and returns the street section nearest to a tapped point, with its walkability. |
 | `POST /api/streets/{way_id}/ratings` | Takes `{rating: 1..5}`. |
 | `GET /api/covered` | Lists the sections that users have marked as covered. |
 | `PUT` / `DELETE /api/covered/{edge_key}` | Marks or unmarks a section as covered. |

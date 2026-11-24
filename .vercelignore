@@ -1,0 +1,12 @@
+# Not needed on Vercel
+frontend/node_modules
+frontend/dist
+reference
+data
+datasets/raw
+datasets/building-heights/*
+!datasets/building-heights/2026_HEIGHT_GVSSM.tif
+LOG.md
+PRD.md
+CLAUDE.md
+SKILL.md
