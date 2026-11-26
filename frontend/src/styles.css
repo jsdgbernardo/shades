@@ -178,6 +178,11 @@ button:disabled { opacity: .5; cursor: default; }
 
 .route-cards { display: grid; gap: 6px; }
 .route-cards--2 { grid-template-columns: 1fr 1fr; }
+.route-cards--3 { grid-template-columns: 1fr 1fr; }
+/* The train option spans the row under the walking routes. */
+.route-card--train { grid-column: 1 / -1; }
+.route-card__label--train { color: #5b2a86; }
+.route-card__stations { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
 .route-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; column-gap: 6px; padding: 7px 9px; border: 1.5px solid transparent; border-radius: 12px; background: rgb(255 255 255 / 70%); text-align: left; }
 .route-card--selected { border-color: var(--brown); background: rgb(255 248 241 / 92%); }
 .route-card__text { display: grid; gap: 1px; min-width: 0; }
@@ -299,3 +304,8 @@ button:disabled { opacity: .5; cursor: default; }
 .street-card__remove { min-height: 0; padding: 0; font-size: 12px; text-decoration: underline; }
 /* Field-test timing (?timing only): under the top cards, out of the way of the map. */
 .timing-readout { position: absolute; z-index: 560; left: var(--side-gap); top: var(--top-clearance); padding: 3px 6px; border-radius: 6px; color: #fff; background: rgb(32 33 36 / 75%); font: 10px/1.35 ui-monospace, monospace; pointer-events: none; }
+/* Train ride card (stretch): steps in order, then the actions. */
+.ride-card { display: grid; gap: 8px; }
+.ride-card__steps { display: grid; gap: 4px; margin: 0; padding-left: 18px; font-size: 13px; }
+.ride-card__steps li:first-child { font-weight: 600; }
+.ride-card__actions { display: flex; justify-content: flex-end; gap: 6px; }

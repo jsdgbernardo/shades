@@ -10,7 +10,7 @@ Shades is a phone-first web app that gives shade-aware walking routes across Met
 
 - **`PRD.md` is the source of truth.**
   - Every non-stretch requirement has an implementation. LOG.md's dated entries record what was verified and what still needs people or a phone.
-  - F-16 to F-19, D-04 and C-07 (train routing) are stretch goals and are not built.
+  - F-16 to F-19, D-04 and C-07 (walk, train, walk with LRT-1, LRT-2 and MRT-3) are stretch goals, now built: see `rail.py` and the train notes below.
 - **The UI follows `reference/home page.png`**:
   - a full-bleed OSM map in its original colours (the user tried greyscale and softened versions and prefers the original); routes get a white casing so they stand out
   - a floating white card with "Your Location" (blue, circle icon) and "Destination" (orange-brown, pin icon), joined by a dotted line, with a swap button
@@ -97,6 +97,8 @@ cd frontend; npm run build
   - Points travel only in POST bodies, never in URLs, because hosts log URLs (C-04).
   - `log_message` is silenced so locations are never logged (C-04).
 - `weather.py`: Open-Meteo hourly UV, temperature and humidity, plus an NWS heat index. Each reading is `{"status": "available"|"not available"}`. Failures are not cached.
+- `rail.py` (stretch): `RailNetwork` reads `datasets/derived/rail.json` (built by `build_rail.py`). `ride()` is the shortest rail path by distance (fewer transfers on a tie), never one that starts or ends with a transfer; ride time = distance at `RIDE_SPEED_KMH` (24, from published end-to-end times) + `TRANSFER_MINUTES` (10) per transfer.
+- Train option in `app.py`: `train_candidates()` pairs up to 3 stations within 1 km straight-line of each end. It keeps pairs whose walks are each ≤ 1 km on foot and whose alighting station is nearer the destination. The first walk is scored at the chosen time and the second at that time + first walk + ride (F-19, `approximate`). `best_train_option()` picks the fewest sun minutes, then the shorter total. The train route has `kind: "train"`, `legs` (walk, ride, walk), walk-only figures (F-17), `total_minutes` (estimate) and its own comfort window. Every route has `total_minutes`. Trips over 10 km get the train option alone when one fits.
 - `places.py`: offline FTS5 search over `places.db` (prefix matches first, then by distance to the other trip point via `near=lat,lon`). Matches names only; each result carries `address` (empty with an older index that has no such column), shown as `kind · address` in `LocationCard`.
 - `storage.py`: `open_store()` picks `TursoStore` (hosted SQLite over https with `urllib`) when `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, `NoStore` on Vercel without them, and otherwise `Store`: SQLite in `data/shades.db` (gitignored), one connection per call because the server is threaded. When the store raises `StoreError`, routes still work and saves return 503. `created_at` is the date only (C-04). Each rating has a random token returned to the device (`token_hash` stores only its SHA-256); re-rating with the token replaces the rating, and `DELETE /api/streets/{way}/ratings` with the token removes it. Older databases gain the column on first use. Streets with fewer than 3 ratings show "not enough ratings". Route walkability is the length-weighted average over rated streets.
 
@@ -120,6 +122,7 @@ cd frontend; npm run build
 - The phone keeps its ratings and tokens in `localStorage` (`lib/ratePrompt.js` `myRatings`); the street card shows "Your rating · Remove".
 - `?timing` shows a field-test readout (`lib/timing.js`): Find routes → routes drawn (P-01) and GPS fix → figures drawn (P-02). See `TESTING.md` for the field tests.
 - Place search never sends a GPS point as `near` (C-04).
+- **Train option in the app:** a full-width route card (lines, stations, "change at", total "(estimate)"). The ride is drawn as a dashed line in the line's colour with a label (`rail` source in `MapView`), plus a legend entry and the train notes under the assumptions. During a walk (`lib/legs.js`), leg 0 is guided to the boarding station, then a `RideCard` lists the steps (no ride time on its own, F-17; no off-route prompt), then leg 2 starts within 200 m of the alighting station or on "I'm off the train".
 - `lib/geo.js` projects a position onto the route and computes the remaining figures client-side (F-13).
 - **User position:** one marker in every mode, a blue dot with a cone toward where the phone points (`userElement` in `MapView`, turned on the map plane). Outside walks, `App.jsx` keeps a live `watchPosition` while the page is visible, stopping only if permission is denied; a good fix clears a location notice and fills an empty start. Walks keep their own watcher.
 - `lib/compass.js`: `watchHeading` reads `deviceorientationabsolute` (Android) or `webkitCompassHeading` (iPhone), corrects for landscape, smooths on the circle and reports at most about 10 times a second. `requestCompassPermission` is called from the locate button and **Start** taps, because iPhone only asks after a tap. The heading never leaves the device (C-04).

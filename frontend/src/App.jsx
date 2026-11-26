@@ -11,7 +11,8 @@ import { pinnedName } from "./lib/pin.js";
 import { ConnectionError, fetchHealth, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, removeRating, setCovered } from "./lib/api.js";
 import { haversineMeters, isOffRoute, projectOntoRoute, remainingFigures } from "./lib/geo.js";
 import { arrivalSummary, buildManeuvers, cumulative, edgeAt, hasArrived, headingAt, nextManeuver } from "./lib/nav.js";
-import { ArrivalCard, NavBanner, NavBar, RateWalkCard } from "./components/NavPanel.jsx";
+import { ArrivalCard, NavBanner, NavBar, RateWalkCard, RideCard } from "./components/NavPanel.jsx";
+import { RIDE_END_METERS, isTrain, walkedSoFar, walkingPart } from "./lib/legs.js";
 import { forgetRated, myRating, rememberRated, ratedStreets, streetsToRate } from "./lib/ratePrompt.js";
 import { MAX_ACCURACY_METERS, geolocation, locationProblem } from "./lib/location.js";
 import { requestCompassPermission, watchHeading } from "./lib/compass.js";
@@ -74,17 +75,26 @@ export default function App() {
   // Legend lists only the styles on the map: the selected route's sections (at the chosen time)
   // plus the open covered section, if any.
   const legendLabels = useMemo(() => {
-    const labels = new Set(mapRoutes.find((route) => route.id === selectedRouteId)?.exposure?.sections?.map((section) => section.label) ?? []);
+    const shown = mapRoutes.find((route) => route.id === selectedRouteId);
+    const labels = new Set(shown?.exposure?.sections?.map((section) => section.label) ?? []);
     if (openCoveredSection.length) labels.add("covered");
+    if (shown?.kind === "train") labels.add("train");
     return labels;
   }, [mapRoutes, selectedRouteId, openCoveredSection.length]);
   selectedRouteRef.current = selectedRoute;
-  // Manoeuvres for the selected route, used for turn-by-turn during the walk.
+  // The walk being guided: the selected route, or for a train option the walk to or from the
+  // station (none during the ride). `walk.leg` is 0, 1 (riding) or 2.
+  const walkLeg = walk.active ? walk.leg ?? 0 : 0;
+  const navRoute = useMemo(() => walkingPart(selectedRoute, walkLeg), [selectedRoute, walkLeg]);
+  const navRouteRef = useRef(navRoute);
+  navRouteRef.current = navRoute;
+  const legRef = useRef(0);
+  // Manoeuvres for the walk being guided, used for turn-by-turn during the walk.
   const routeNav = useMemo(() => {
-    if (!selectedRoute) return { maneuvers: [], distances: [0], total: 0 };
-    const distances = cumulative(selectedRoute.geometry);
-    return { maneuvers: buildManeuvers(selectedRoute.geometry, selectedRoute.edges), distances, total: distances[distances.length - 1] };
-  }, [selectedRoute]);
+    if (!navRoute) return { maneuvers: [], distances: [0], total: 0 };
+    const distances = cumulative(navRoute.geometry);
+    return { maneuvers: buildManeuvers(navRoute.geometry, navRoute.edges), distances, total: distances[distances.length - 1] };
+  }, [navRoute]);
   const routeNavRef = useRef(routeNav);
   routeNavRef.current = routeNav;
 
@@ -161,7 +171,10 @@ export default function App() {
       setOnline(true);
       setData(payload);
       setWeather(payload.weather);
-      setSelectedId((previous) => (payload.routes.some((route) => route.id === previous) ? previous : payload.routes.at(-1).id));
+      // Keep the chosen route if it is still there; otherwise the last walking route (the shadier
+      // one when there is one), or the train option when it is the only route.
+      const walking = payload.routes.filter((route) => route.kind !== "train");
+      setSelectedId((previous) => (payload.routes.some((route) => route.id === previous) ? previous : (walking.at(-1) ?? payload.routes[0]).id));
       setTimeOffset(0);
       setStatus("results");
       mapRef.current?.fitGeometry(payload.routes.flatMap((route) => route.geometry));
@@ -338,9 +351,17 @@ export default function App() {
   // Live walk: position marker and figures for the route still ahead (PRD F-13, F-14, C-06).
   const handlePosition = useCallback((position) => {
     const { latitude, longitude, accuracy } = position.coords;
-    const route = selectedRouteRef.current;
+    const trip = selectedRouteRef.current;
     positionRef.current = { latitude, longitude };
     setUserPosition({ latitude, longitude });
+    // Riding (train option, leg 1): no figures and no off-route prompt along the train part (F-14).
+    // Near the alighting station, the second walk starts.
+    if (isTrain(trip) && legRef.current === 1) {
+      const exit = trip.legs[2].geometry[0];
+      if (haversineMeters([longitude, latitude], exit) <= RIDE_END_METERS) goToLegRef.current?.(2);
+      return;
+    }
+    const route = navRouteRef.current;
     if (!route) return;
     const projection = projectOntoRoute([longitude, latitude], route.geometry);
     const remaining = remainingFigures(route.exposure.sections, projection.along);
@@ -352,7 +373,9 @@ export default function App() {
     // a corner or reaching it from another side). End the walk and show the summary.
     const toEnd = haversineMeters([longitude, latitude], route.geometry[route.geometry.length - 1]);
     if (hasArrived(remaining.distance_m, toEnd, !isOffRoute(projection.distanceFromRoute))) {
-      arriveRef.current?.(route);
+      // At the boarding station of a train option the ride begins; otherwise the trip is over.
+      if (isTrain(trip) && legRef.current === 0) goToLegRef.current?.(1);
+      else arriveRef.current?.(trip ?? route);
       return;
     }
     setWalk((current) => (current.active ? {
@@ -465,7 +488,16 @@ export default function App() {
     promptDismissedRef.current = false;
     closeTap();
     setArrival(null);
-    setWalk({ active: true, remaining: null, message: "", startedAt: Date.now() });
+    legRef.current = 0;
+    setWalk({ active: true, leg: 0, remaining: null, message: "", startedAt: Date.now() });
+  };
+  // Moves a train trip to its next part: the ride, then the walk from the alighting station.
+  const goToLegRef = useRef(null);
+  goToLegRef.current = (leg) => {
+    legRef.current = leg;
+    setOffRoute(null);
+    promptDismissedRef.current = false;
+    setWalk((current) => (current.active ? { ...current, leg, remaining: null, heading: null, maneuver: null, along: 0 } : current));
   };
   // Navigation view only once the walk has a GPS fix; otherwise the normal sheet shows "Locating…".
   const navigation = walk.active && userPosition && walk.remaining && walk.heading != null
@@ -501,8 +533,9 @@ export default function App() {
   const [rated, setRated] = useState({});
   const endWalk = () => {
     const route = selectedRouteRef.current;
-    const total = routeNavRef.current.total;
-    const walked = walk.along ?? 0;
+    // Halfway counts over the trip's walking (both walks of a train option).
+    const total = route?.distance_m ?? 0;
+    const walked = walkedSoFar(route, walk.leg ?? 0, walk.along ?? 0);
     const streets = route && total > 0 && walked >= total / 2 ? streetsToRate(route.edges, walked, ratedStreets()) : [];
     setRated({});
     setRateWalk(streets.length ? { streets } : null);
@@ -526,7 +559,7 @@ export default function App() {
   const [coveredHere, setCoveredHere] = useState(null);
   const coveredTimer = useRef(null);
   const markCoveredHere = async () => {
-    const route = selectedRouteRef.current;
+    const route = navRouteRef.current;
     const edge = route && edgeAt(route.edges, routeNavRef.current.distances, walk.along ?? 0);
     if (!edge) return;
     clearTimeout(coveredTimer.current);
@@ -672,6 +705,8 @@ export default function App() {
             <ArrivalCard arrival={arrival} rated={rated} onRate={rateWalked} onDone={() => setArrival(null)} />
           ) : rateWalk ? (
             <RateWalkCard streets={rateWalk.streets} rated={rated} onRate={rateWalked} onDone={() => setRateWalk(null)} />
+          ) : walk.active && walk.leg === 1 && isTrain(selectedRoute) ? (
+            <RideCard ride={selectedRoute.legs[1]} onOffTrain={() => goToLegRef.current?.(2)} onEnd={endWalk} />
           ) : navigation ? (
             <NavBar
               remaining={walk.remaining}

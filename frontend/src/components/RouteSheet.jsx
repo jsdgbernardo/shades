@@ -11,14 +11,21 @@ const prefersReducedMotion = () =>
 
 function RouteCard({ route, selected, onSelect }) {
   const exposure = route.exposure;
+  const train = route.kind === "train";
+  const total = route.total_minutes ?? route.duration_minutes;
   // Two columns: text on the left, the sun share pinned top-right in line with the route name.
+  // Every card shows the total travel time (F-17); for walking routes it is the walking time.
   return (
-    <button type="button" className={`route-card ${selected ? "route-card--selected" : ""}`} onClick={() => onSelect(route.id)} aria-pressed={selected}>
+    <button type="button" className={`route-card ${train ? "route-card--train" : ""} ${selected ? "route-card--selected" : ""}`} onClick={() => onSelect(route.id)} aria-pressed={selected}>
       <span className="route-card__text">
         <span className={`route-card__label route-card__label--${route.id}`}>{route.label.replace(" route", "")}</span>
-        <span className="route-card__line">{formatMinutes(route.duration_minutes)} walk · {formatDistance(route.distance_m)}</span>
+        {train && <span className="route-card__line route-card__stations">{route.summary}{route.legs?.[1]?.transfers?.length ? ` · change at ${route.legs[1].transfers.map((step) => step.from).join(", ")}` : ""}</span>}
+        <span className="route-card__line">
+          {train ? `~${formatMinutes(total)} total (estimate) · ${formatMinutes(route.duration_minutes)} walk · ${formatDistance(route.distance_m)}` : `${formatMinutes(total)} total · ${formatDistance(route.distance_m)} walk`}
+        </span>
         <span className="route-card__line route-card__muted">{formatMinutes(exposure.sun_minutes)} in sun</span>
         {exposure.unknown_percent > 0 && <span className="route-card__unknown">{formatPercent(exposure.unknown_percent)} shade unknown, counted as sun</span>}
+        {train && <span className="route-card__unknown">Walks only · second walk approximate</span>}
         {route.walkability?.score != null && (
           <span className="route-card__walkability">Walkability {route.walkability.score.toFixed(1)}/5 (user ratings)</span>
         )}
@@ -252,7 +259,7 @@ export default function RouteSheet({ status, error, message, onDismissMessage, d
         />
         <div className="sheet-peek" ref={peekRef}>
           {message && <p className="sheet-note sheet-note--warn">{message}</p>}
-          <div className={`route-cards route-cards--${routes.length}`}>
+          <div className={`route-cards route-cards--${routes.filter((route) => route.kind !== "train").length}`}>
             {routes.map((route) => (
               <RouteCard key={route.id} route={route} selected={route.id === selected.id} onSelect={onSelect} />
             ))}
@@ -299,6 +306,10 @@ export default function RouteSheet({ status, error, message, onDismissMessage, d
           <p className="assumptions" title={data.assumptions?.notes?.join(" ")}>
             Clear sky · building shade only · {data.assumptions?.walking_speed_m_per_min ?? 80} m/min
           </p>
+          {/* Train option (C-07, F-18): ride times are estimates; service status is not checked. */}
+          {routes.some((route) => route.kind === "train") && (
+            <p className="assumptions">{data.assumptions?.train_notes?.slice(0, 2).join(" ")}</p>
+          )}
         </div>
         </div>
       </section>

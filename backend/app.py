@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from area import HOME, MAX_TRIP_M, MAX_WALK_M, STUDY_AREA, in_study_area
 from places import PlaceIndex
+from rail import RIDE_SPEED_KMH, TRANSFER_MINUTES, RailNetwork
 from routing import WalkingGraph, edge_key, haversine_meters
 from shade import WALKING_SPEED_M_PER_MIN, ExposureModel, HeightRaster, analyze_route, shift_time
 from storage import StoreError, open_store, route_walkability, street_score
@@ -31,7 +32,17 @@ ASSUMPTIONS = {
         "Sections without building height data are counted as direct sun.",
         "Covered walkways count only where users have marked them.",
     ],
+    # Train option (stretch, F-18, C-07): estimates only, no schedules or service status.
+    "train_notes": [
+        f"Train times are estimates: ride distance at {RIDE_SPEED_KMH:g} km/h (from published end-to-end times) plus {TRANSFER_MINUTES:g} min per transfer.",
+        "Train service status, schedules, delays and crowding are not checked.",
+        "The second walk is scored at the time you are expected to reach it, so its figures are approximate.",
+    ],
 }
+
+# Walk, train, walk option (PRD F-16): each walk at most this long, and the stations searched.
+TRAIN_WALK_MAX_M = 1000.0
+TRAIN_STATIONS_PER_END = 3
 
 # Prebuilt data (backend/build_tiles.py). Nothing is parsed at startup: graph tiles load on
 # demand, place search reads a SQLite index, and buildings without heights come as raster cells.
@@ -41,6 +52,7 @@ HEIGHT_RASTER = HeightRaster.from_file()
 HEIGHT_RASTER.mark_unknown_cells(DERIVED_DIR / "unknown-height-cells.bin")
 BUILDING_HEIGHT_REPORT = BUILD_INFO["building_heights"]
 PLACE_INDEX = PlaceIndex(DERIVED_DIR / "places.db")
+RAIL = RailNetwork(DERIVED_DIR / "rail.json")
 
 
 def is_in_study_area(latitude: float, longitude: float) -> bool:
@@ -133,6 +145,161 @@ def build_route(route_id: str, label: str, path: list[int], travel_time: str, mo
     }
 
 
+class _Models:
+    """One exposure model per travel time, shared by every walk scored at that time."""
+
+    def __init__(self) -> None:
+        self._models: dict[str, ExposureModel] = {}
+
+    def at(self, when: str) -> ExposureModel:
+        if when not in self._models:
+            self._models[when] = ExposureModel(HEIGHT_RASTER, when, STUDY_CENTER[0], STUDY_CENTER[1])
+        return self._models[when]
+
+
+def walk_leg(path: list[int], when: str, models: _Models, covered: set[str], approximate: bool = False) -> dict[str, Any]:
+    """One walking part of a train option, scored at `when`."""
+    geometry, length = WALKING_GRAPH.route_geometry(path)
+    edges = WALKING_GRAPH.path_edges(path)
+    flags = [edge["edge_key"] in covered for edge in edges]
+    return {
+        "type": "walk",
+        "geometry": geometry,
+        "distance_m": round(length, 1),
+        "duration_minutes": round(length / WALKING_SPEED_M_PER_MIN, 1),
+        "time": when,
+        "approximate": approximate,
+        "exposure": analyze_route(geometry, when, HEIGHT_RASTER, flags, models.at(when)),
+        "edges": [{**edge, "length_m": round(edge["length_m"], 1)} for edge in edges],
+        "_flags": flags,
+    }
+
+
+def combine_walks(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """F-17: sun figures of a train option count the two walks only."""
+    total = first["distance_m"] + second["distance_m"]
+    exposures = (first["exposure"], second["exposure"])
+    sun = sum(exposure["sun_length_m"] for exposure in exposures)
+    unknown = sum(exposure["unknown_length_m"] for exposure in exposures)
+    covered = sum(exposure["covered_percent"] / 100 * walk["distance_m"] for exposure, walk in zip(exposures, (first, second)))
+    sections = first["exposure"]["sections"] + [{**section, "approximate": True} for section in second["exposure"]["sections"]]
+    return {
+        "status": "computed",
+        "sun_percent": round(sun / total * 100, 1) if total else 0.0,
+        "sun_minutes": round(sun / WALKING_SPEED_M_PER_MIN, 1),
+        "shaded_percent": round((total - sun) / total * 100, 1) if total else 0.0,
+        "unknown_percent": round(unknown / total * 100, 1) if total else 0.0,
+        "covered_percent": round(covered / total * 100, 1) if total else 0.0,
+        "sun_length_m": round(sun, 1),
+        "unknown_length_m": round(unknown, 1),
+        "sections": sections,
+        "second_walk_approximate": True,
+    }
+
+
+def train_candidates(start_node: int, destination_node: int, travel_time: str, covered: set[str], models: _Models) -> list[dict[str, Any]]:
+    """Every qualifying walk, train, walk option (F-16), with its figures. Empty when none qualifies.
+
+    Qualifies: both walks are TRAIN_WALK_MAX_M or less on foot, and the alighting station is nearer
+    the destination than the boarding station. The first walk is scored at the chosen time; the
+    second at that time plus the first walk and the estimated ride (F-19).
+    """
+    start_point = WALKING_GRAPH.coordinates[start_node]
+    end_point = WALKING_GRAPH.coordinates[destination_node]
+
+    def walks(near: tuple[float, float], to_station: bool) -> list[tuple[Any, list[int]]]:
+        found = []
+        for station, entrance, _ in RAIL.stations_near(near, TRAIN_WALK_MAX_M)[:TRAIN_STATIONS_PER_END]:
+            node = WALKING_GRAPH.nearest_node(entrance, max_distance_m=150)
+            if node is None:
+                continue
+            first, second = (start_node, node) if to_station else (node, destination_node)
+            path = [first] if first == second else WALKING_GRAPH.route_nodes(first, second, max_cost=TRAIN_WALK_MAX_M)
+            if len(path) >= 2 and WALKING_GRAPH.path_cost(path) <= TRAIN_WALK_MAX_M:
+                found.append((station, path))
+        return found
+
+    boardings, alightings = walks(start_point, True), walks(end_point, False)
+    options = []
+    first_walks: dict[str, dict[str, Any]] = {}
+    for boarding, first_path in boardings:
+        for alighting, second_path in alightings:
+            if alighting.id == boarding.id:
+                continue
+            if haversine_meters((alighting.lat, alighting.lon), end_point) >= haversine_meters((boarding.lat, boarding.lon), end_point):
+                continue
+            ride = RAIL.ride(boarding.id, alighting.id)
+            if ride is None:
+                continue
+            if boarding.id not in first_walks:
+                first_walks[boarding.id] = walk_leg(first_path, travel_time, models, covered)
+            first = first_walks[boarding.id]
+            reach = shift_time(travel_time, round(first["duration_minutes"] + ride.minutes))
+            second = walk_leg(second_path, reach, models, covered, approximate=True)
+            total = first["duration_minutes"] + ride.minutes + second["duration_minutes"]
+            options.append({
+                "boarding": boarding, "alighting": alighting, "ride": ride, "walks": (first, second),
+                "sun_minutes": round(first["exposure"]["sun_minutes"] + second["exposure"]["sun_minutes"], 1),
+                "total_minutes": round(total, 1),
+            })
+    return options
+
+
+def best_train_option(options: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """F-16: fewest minutes in sun across the two walks; ties go to the shorter total time."""
+    return min(options, key=lambda option: (option["sun_minutes"], option["total_minutes"]), default=None)
+
+
+def train_route(option: dict[str, Any], travel_time: str, covered: set[str], models: _Models) -> dict[str, Any]:
+    first, second = option["walks"]
+    ride = option["ride"]
+    exposure = combine_walks(first, second)
+    ride_leg = {
+        "type": "ride",
+        "from": option["boarding"].name,
+        "to": option["alighting"].name,
+        "segments": ride.segments,
+        "transfers": ride.transfers,
+        "geometry": [point for segment in ride.segments for point in segment["geometry"]],
+    }
+    walking_m = first["distance_m"] + second["distance_m"]
+    lines = " → ".join(dict.fromkeys(segment["line_name"].replace("Line ", "-").replace(" -", "-") for segment in ride.segments))
+    return {
+        "id": "train",
+        "kind": "train",
+        "label": f"Train · {lines}",
+        "summary": f"{option['boarding'].name} → {option['alighting'].name}",
+        # Map and fit use the whole trip; the sections cover the walks only.
+        "geometry": first["geometry"] + ride_leg["geometry"] + second["geometry"],
+        "distance_m": round(walking_m, 1),
+        "duration_minutes": round(walking_m / WALKING_SPEED_M_PER_MIN, 1),
+        "total_minutes": option["total_minutes"],
+        "total_is_estimate": True,
+        "exposure": exposure,
+        "comfort_window": train_comfort_window(first, second, ride.minutes, travel_time, covered, models),
+        "legs": [_public(first), ride_leg, _public(second)],
+        "edges": first["edges"] + second["edges"],
+    }
+
+
+def _public(leg: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in leg.items() if not key.startswith("_")}
+
+
+def train_comfort_window(first: dict[str, Any], second: dict[str, Any], ride_minutes: float, travel_time: str,
+                         covered: set[str], models: _Models) -> dict[str, Any]:
+    """F-15 for a train option: each later start also shifts the second walk (F-19)."""
+    times = []
+    for offset in COMFORT_OFFSETS_MINUTES:
+        when = shift_time(travel_time, offset)
+        reach = shift_time(when, round(first["duration_minutes"] + ride_minutes))
+        one = analyze_route(first["geometry"], when, HEIGHT_RASTER, first["_flags"], models.at(when))
+        two = analyze_route(second["geometry"], reach, HEIGHT_RASTER, second["_flags"], models.at(reach))
+        exposure = combine_walks({**first, "exposure": one}, {**second, "exposure": two})
+        times.append({"offset_minutes": offset, "time": when, "sun_percent": exposure["sun_percent"], "exposure": exposure})
+    return {"times": times, **recommend(times)}
+
+
 def compare(shortest: dict[str, Any], shadier: dict[str, Any]) -> dict[str, float]:
     """How much less sun the shadier route has than the shortest (PRD F-09)."""
     return {
@@ -144,9 +311,9 @@ def compare(shortest: dict[str, Any], shadier: dict[str, Any]) -> dict[str, floa
 
 
 def build_routes(start: tuple[float, float], destination: tuple[float, float], travel_time: str) -> dict[str, Any]:
-    # Walking trips only: keeps every request to the tiles along one corridor (user decision: 10 km).
-    if haversine_meters(start, destination) > MAX_TRIP_M:
-        raise RouteError(f"Too far for a walking route (over {MAX_TRIP_M // 1000} km). Choose points closer together.")
+    # Walking routes stop at 10 km straight-line (user decision); longer trips can still get a
+    # train option (F-16), whose two walks are short.
+    too_far_to_walk = haversine_meters(start, destination) > MAX_TRIP_M
     start_node = WALKING_GRAPH.nearest_node(start)
     destination_node = WALKING_GRAPH.nearest_node(destination)
     if start_node is None or destination_node is None:
@@ -154,6 +321,16 @@ def build_routes(start: tuple[float, float], destination: tuple[float, float], t
         raise RouteError(f"There is no walking path near the {which}. Choose a point closer to a street or path.")
     if start_node == destination_node:
         raise RouteError("The start and destination are at the same spot on the walking network. Choose points farther apart.")
+    covered = covered_edges_provider()
+    models = _Models()
+    if too_far_to_walk:
+        option = best_train_option(train_candidates(start_node, destination_node, travel_time, covered, models))
+        if option is None:
+            raise RouteError(f"Too far for a walking route (over {MAX_TRIP_M // 1000} km), and no train option fits. Choose points closer together.")
+        routes = [train_route(option, travel_time, covered, models)]
+        add_walkability(routes)
+        return {"routes": routes, "comparison": None,
+                "alternative_note": f"Too far to walk (over {MAX_TRIP_M // 1000} km), so only the train option is shown."}
     # Search limits keep a failing request from exploring the whole city. Detours around rivers
     # and gated villages can be long (a 337 m gap needed a 4.5 km walk), so the shortest search
     # allows 3x the straight-line distance + 5 km, up to MAX_WALK_M. The shadier search can never
@@ -163,8 +340,7 @@ def build_routes(start: tuple[float, float], destination: tuple[float, float], t
     if len(shortest_path) < 2:
         raise RouteError("No walking route was found between those points. Try moving the start or destination closer to a street or path.")
 
-    covered = covered_edges_provider()
-    model = ExposureModel(HEIGHT_RASTER, travel_time, STUDY_CENTER[0], STUDY_CENTER[1])
+    model = models.at(travel_time)
     shortest = build_route("shortest", "Shortest route", shortest_path, travel_time, model, covered)
     routes = [shortest]
     shadier_limit = SHADIER_SUN_WEIGHT * WALKING_GRAPH.path_cost(shortest_path) + 1
@@ -176,15 +352,22 @@ def build_routes(start: tuple[float, float], destination: tuple[float, float], t
             routes.append(shadier)
     if len(routes) == 1:
         note = "No shadier alternative was found for this trip at this time."
-    # Walkability is shown for information only, after the routes are chosen (PRD S-09, C-02).
+    comparison = compare(routes[0], routes[1]) if len(routes) == 2 else None
+    for route in routes:
+        route["total_minutes"] = route["duration_minutes"]  # F-17: walking-only total = walking time
+    # Train option (stretch, F-16) alongside the walking routes; none and no error when nothing fits.
+    option = best_train_option(train_candidates(start_node, destination_node, travel_time, covered, models))
+    if option is not None:
+        routes.append(train_route(option, travel_time, covered, models))
+    add_walkability(routes)
+    return {"routes": routes, "comparison": comparison, "alternative_note": note}
+
+
+def add_walkability(routes: list[dict[str, Any]]) -> None:
+    """Walkability is shown for information only, after the routes are chosen (PRD S-09, C-02)."""
     stats = rating_stats([edge["way_id"] for route in routes for edge in route["edges"]])
     for route in routes:
         route["walkability"] = route_walkability(route["edges"], stats)
-    return {
-        "routes": routes,
-        "comparison": compare(routes[0], routes[1]) if len(routes) == 2 else None,
-        "alternative_note": note,
-    }
 
 
 def create_route_response(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:

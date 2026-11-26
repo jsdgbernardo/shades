@@ -1,6 +1,7 @@
 import { formatMinutes, formatPercent } from "../lib/format.js";
 import { maneuverText } from "../lib/nav.js";
 import { formatClock } from "../lib/time.js";
+import { rideSteps } from "../lib/legs.js";
 
 const ARROW_ROTATION = {
   "slight-right": 45, right: 90, "sharp-right": 135, uturn: 180,
@@ -106,6 +107,26 @@ export function RateWalkCard({ streets, rated = {}, onRate, onDone }) {
         <button type="button" className={any ? "solid-button solid-button--small" : "text-button"} onClick={onDone}>{any ? "Done" : "Skip"}</button>
       </div>
       <RateList streets={streets} rated={rated} onRate={onRate} />
+    </section>
+  );
+}
+
+/**
+ * During the train part of a train option: what to ride, where to change and where to get off.
+ * No ride time is shown on its own (F-17). The second walk starts near the alighting station, or
+ * when the user taps "I'm off the train".
+ */
+export function RideCard({ ride, onOffTrain, onEnd }) {
+  const steps = rideSteps(ride);
+  return (
+    <section className="float-card ride-card" aria-live="polite" aria-label="Train ride">
+      <ol className="ride-card__steps">
+        {steps.map((step) => <li key={step}>{step}</li>)}
+      </ol>
+      <div className="ride-card__actions">
+        <button type="button" className="text-button" onClick={onEnd}>End</button>
+        <button type="button" className="solid-button solid-button--small" onClick={onOffTrain}>I'm off the train</button>
+      </div>
     </section>
   );
 }

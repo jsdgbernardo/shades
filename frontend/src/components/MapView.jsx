@@ -47,7 +47,7 @@ function lineLayer(id, source, { color, width, opacity = 1, dash, cap = "round" 
 }
 
 function addRouteLayers(map) {
-  ["covered", "highlight", "others", "selected", "sections"].forEach((id) => map.addSource(id, { type: "geojson", data: EMPTY }));
+  ["covered", "highlight", "others", "selected", "rail", "sections"].forEach((id) => map.addSource(id, { type: "geojson", data: EMPTY }));
   // Drawn bottom to top.
   map.addLayer(lineLayer("covered-line", "covered", { color: "#6b4fc9", width: 6, opacity: 0.85 }));
   map.addLayer(lineLayer("covered-centre", "covered", { color: "#ffffff", width: 1.5 }));
@@ -55,6 +55,17 @@ function addRouteLayers(map) {
   map.addLayer(lineLayer("others-casing", "others", { color: "#ffffff", width: 9, opacity: 0.9 }));
   map.addLayer(lineLayer("others-line", "others", { color: "#9aa0a8", width: 5, opacity: 0.9 }));
   map.addLayer(lineLayer("selected-casing", "selected", { color: "#ffffff", width: 12 }));
+  // Train part of a train option (F-17): the line's colour in long dashes, labelled with the line,
+  // so it differs from every walking section by pattern as well as colour (S-04).
+  map.addLayer({
+    id: "rail-line", source: "rail", type: "line", layout: { "line-cap": "butt", "line-join": "round" },
+    paint: { "line-color": ["get", "colour"], "line-width": 6, "line-dasharray": [2.2, 0.9] },
+  });
+  map.addLayer({
+    id: "rail-label", source: "rail", type: "symbol",
+    layout: { "symbol-placement": "line", "text-field": ["get", "name"], "text-font": ["Noto Sans Bold"], "text-size": 12, "symbol-spacing": 220 },
+    paint: { "text-color": ["get", "colour"], "text-halo-color": "#ffffff", "text-halo-width": 2 },
+  });
   SECTION_LAYERS.forEach(({ id, label, style }) => map.addLayer(lineLayer(id, "sections", style, ["==", ["get", "label"], label])));
   // The tapped street or section, on top so it shows even over the selected route's casing.
   map.addLayer(lineLayer("highlight-halo", "highlight", { color: "#202124", width: 14, opacity: 0.22 }));
@@ -235,6 +246,8 @@ const MapView = forwardRef(function MapView(
     map.getSource("highlight").setData(highlight ? collection([line(highlight)]) : EMPTY);
     map.getSource("others").setData(collection(routes.filter((route) => route.id !== selectedId).map((route) => line(route.geometry, { id: route.id }))));
     map.getSource("selected").setData(selected ? collection([line(selected.geometry)]) : EMPTY);
+    const rides = selected?.legs?.filter((leg) => leg.type === "ride").flatMap((leg) => leg.segments) ?? [];
+    map.getSource("rail").setData(collection(rides.map((segment) => line(segment.geometry, { name: segment.line_name, colour: segment.colour }))));
     map.getSource("sections").setData(collection(sections.map((section, index) => line(section.geometry, { label: section.label, index }))));
 
     const markers = [];

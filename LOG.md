@@ -1198,3 +1198,51 @@ This is the first step of the stretch train option (F-16 to F-19). New build-onl
   - continuous shapes: stations within 2 m of the shape, no bend sharper than 100°, and track between neighbouring stations shorter than 1.5 × the straight line
 - **Bend check:** the real shapes bend at most 16.5°, and a copy with one stretch reversed bends about 175°, so the check would catch a way joined backwards.
 - **All backend tests:** `python -m unittest discover -s backend -p 'test_*.py'` → 107 tests, OK.
+
+## 2026-11-26: Walk, train, walk option (stretch F-16 to F-19, C-07)
+
+- **Rail network** (`backend/rail.py`, reading the `rail.json` built earlier today):
+  - LRT-1, LRT-2 and MRT-3, joined by the three transfers.
+  - The ride is the shortest rail path by distance; ties go to fewer transfers.
+  - A ride that only transfers, or that starts or ends with a transfer, is refused, because boarding at the other station of that interchange is the same trip and is offered on its own. The first test had boarded at LRT-2 Recto just to change at once to LRT-1 Doroteo Jose.
+- **Ride time (F-18):** distance at **24 km/h** plus **10 min per transfer**. The speed comes from published end-to-end times:
+  - LRT-2 Recto–Antipolo about 40 min (DOTr, Inquirer 2021)
+  - MRT-3 North Avenue–Taft Avenue 45 min after rehabilitation (RTVM 2022, Manila Bulletin 2021)
+  - LRT-1 Fernando Poe Jr.–Dr. Santos "less than an hour" (Inquirer 2024), taken as 60 min
+
+  Over the lines' lengths in `rail.json` (16.6 + 16.5 + 24.6 km in 145 min) that is 23.9 km/h. The 10 min transfer allowance is a stated assumption. The app shows both as estimates and says service status is not checked (C-07).
+- **Finding the option (F-16, F-19):**
+  - **Candidates:** up to 3 stations with an entrance within 1 km straight-line of each end.
+  - **Rules:** both walks 1 km or less on foot (the existing shortest walking route), and the alighting station nearer the destination.
+  - **Scoring:** the first walk at the chosen time; the second at that time + first walk + ride, marked approximate.
+  - **Choice:** the fewest minutes in sun, then the shorter total. If none fits, there's no option and no error.
+- **Over 10 km:** these trips no longer just fail. They get the train option alone when one fits, with a note; otherwise the old message.
+- **Display (F-17):**
+  - **Cards:** every card now shows its total time; for walking routes it equals the walking time. The train card spans the row: lines, stations, "change at", "~N min total (estimate)", walk time and distance, "Walks only · second walk approximate". No separate ride time or distance appears.
+  - **Map:** the ride is a dashed line in each line's OSM colour, labelled with the line name. The legend gains "Train".
+  - **Default route:** the default selection stays a walking route.
+- **Navigation:**
+  - **Leg 0:** guided to the boarding station; arriving there starts the ride.
+  - **The ride:** a ride card lists the steps (ride, change, get off) with **End** and **I'm off the train**. No off-route prompt (F-14) and no figures.
+  - **Leg 2:** starts within 200 m of the alighting station.
+  - **Arrival:** the card summarises the whole trip and asks about streets from both walks.
+
+### Verification
+
+- **Backend:** 119 tests, OK. New `test_train.py` covers:
+  - the rail paths and transfers, the F-18 arithmetic, no transfer-only rides, the ride shape direction
+  - the PRD's 6 trips: Katipunan→Ortigas and Katipunan→Ayala with a transfer, Recto→Vito Cruz, Katipunan→Gilmore with options; Ateneo→UP Diliman and a short BGC walk with none
+  - every qualifying pair recomputed separately, with the shown option the lowest in sun minutes (F-16 method)
+  - the F-17 walk-only figures and total
+  - the F-19 shifted second walk and its approximate label
+  - no schedule, fare, delay or crowding fields (C-07)
+  - over-10 km trips
+- **Frontend:** `npx vitest run` → 49 tests, OK (new `legs.test.js`). Build OK.
+- **P-01 with the train option:** 20 seeded requests (8 near stations, 12 random), in-process: 20 of 20 within 10 s (median 0.36 s, max 2.22 s), with a train option in 5 of 20, which meets "at least 5 of 20".
+- **Browser preview** at 360 × 740 (`/?simulate-location`), Katipunan → SM Megamall:
+  - **Card:** "Train · LRT-2 → MRT-3, Katipunan → Ortigas, change at Araneta Center - Cubao, ~32 min total (estimate) · 7 min walk · 530 m". The map showed the dashed LRT-2 line with its label and the "Train" legend.
+  - **Simulated trip:** a guided walk to Katipunan; the ride card at the station; no off-route prompt mid-ride; the second walk started near Ortigas; the arrival card listed streets from both walks. No console errors.
+- **Known limits:**
+  - 31 of 51 stations have no mapped entrance, so walks end at the station point, and some trips miss the 1 km limit for that reason (Katipunan → Robinsons Galleria: 1,088 m from Ortigas station).
+  - MRT-3's OSM colour is yellow.
+- **Not verified:** a real ride, timing on the live site, and P-01 on mobile data.
