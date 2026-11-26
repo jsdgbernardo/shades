@@ -41,7 +41,7 @@ ASSUMPTIONS = {
 }
 
 # Walk, train, walk option (PRD F-16): each walk at most this long, and the stations searched.
-TRAIN_WALK_MAX_M = 1000.0
+TRAIN_WALK_MAX_M = 2000.0  # user decision 2026-11-26 (was 1 km, PRD F-16 proposed)
 TRAIN_STATIONS_PER_END = 3
 
 # Prebuilt data (backend/build_tiles.py). Nothing is parsed at startup: graph tiles load on
@@ -245,9 +245,22 @@ def train_candidates(start_node: int, destination_node: int, travel_time: str, c
     return options
 
 
-def best_train_option(options: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """F-16: fewest minutes in sun across the two walks; ties go to the shorter total time."""
-    return min(options, key=lambda option: (option["sun_minutes"], option["total_minutes"]), default=None)
+def beats_walking(option: dict[str, Any], walking: list[dict[str, Any]]) -> bool:
+    """False when a train option is no better than walking in sun minutes nor in total time (user
+    decision, PRD F-16): with walks of up to 2 km, a short trip could otherwise get a longer, sunnier
+    train trip. With no walking route (trips over 10 km), any option counts."""
+    if not walking:
+        return True
+    least_sun = min(route["exposure"]["sun_minutes"] for route in walking)
+    least_time = min(route["total_minutes"] for route in walking)
+    return option["sun_minutes"] < least_sun or option["total_minutes"] < least_time
+
+
+def best_train_option(options: list[dict[str, Any]], walking: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+    """F-16: among options that beat walking in sun or time, the fewest minutes in sun across the
+    two walks; ties go to the shorter total time."""
+    useful = [option for option in options if beats_walking(option, walking or [])]
+    return min(useful, key=lambda option: (option["sun_minutes"], option["total_minutes"]), default=None)
 
 
 def train_route(option: dict[str, Any], travel_time: str, covered: set[str], models: _Models) -> dict[str, Any]:
@@ -356,7 +369,7 @@ def build_routes(start: tuple[float, float], destination: tuple[float, float], t
     for route in routes:
         route["total_minutes"] = route["duration_minutes"]  # F-17: walking-only total = walking time
     # Train option (stretch, F-16) alongside the walking routes; none and no error when nothing fits.
-    option = best_train_option(train_candidates(start_node, destination_node, travel_time, covered, models))
+    option = best_train_option(train_candidates(start_node, destination_node, travel_time, covered, models), routes)
     if option is not None:
         routes.append(train_route(option, travel_time, covered, models))
     add_walkability(routes)

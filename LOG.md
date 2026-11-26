@@ -1246,3 +1246,26 @@ This is the first step of the stretch train option (F-16 to F-19). New build-onl
   - 31 of 51 stations have no mapped entrance, so walks end at the station point, and some trips miss the 1 km limit for that reason (Katipunan → Robinsons Galleria: 1,088 m from Ortigas station).
   - MRT-3's OSM colour is yellow.
 - **Not verified:** a real ride, timing on the live site, and P-01 on mobile data.
+
+## 2026-11-26: Train option live, timed on the deployed site
+
+- Pushed as `e52315f`; live at https://shades-jsb.vercel.app/ about 30 s later.
+- **P-01 with the train option on the live site**, using the same 20 seeded requests from this laptop's network (not mobile data):
+  - **First run, started right after the deploy:** 20 of 20 within 10 s (max 4.05 s), but a train option in only 4 of 20. Trip 1 (Legarda → EDSA) had none.
+  - **Same trip on its own minutes later:** it had the train option, matching the in-process run. The likely cause is that the first request was answered by the previous deployment while the new one was going live. This wasn't proven.
+  - **Second full run:** 20 of 20 within 10 s (median 0.71 s, max 3.08 s), with a train option in 5 of 20.
+- **Still for a phone:** P-01 on mobile data and a real ride (see `TESTING.md`).
+
+## 2026-11-26: Train walks up to 2 km, and only when the train beats walking
+
+- **Walk limit:** raised from 1 km to **2 km** for each walk of a train option, at the user's request. PRD F-16 now says 2 km instead of "1 km (proposed)", and its method says "none within 2 km". `TRAIN_WALK_MAX_M` = 2000.
+- **New side effect:** short trips could get a train option worse than walking. Seeded trip 20 (2.4 km near Shaw Boulevard) got a one-stop ride with 1.8 km + 940 m of walking: 37 min and 34 min in sun, against 31 min and 31 min walking.
+- **Fix (user decision, PRD F-16 updated):** an option no better than the walking-only routes in both minutes in sun and total time is not offered. `beats_walking()` compares against the least sun and least time among the walking routes; trips over 10 km have none, so any option counts. Filtering happens before the best option is chosen, so another station pair that does beat walking can still be shown.
+
+### Verification
+
+- **Backend:** 121 tests, OK. New: the beats-walking rule (less sun, quicker, a tie isn't better, no walking route), and trip 20, whose options are all hidden. Existing tests pass with 2 km, including the PRD's 6 trips; the two trips without an option still have none.
+- **P-01 in-process, same 20 seeded requests:** 20 of 20 within 10 s (median 0.32 s, max 2.20 s).
+  - Train option in 9 of 20 at 2 km before the fix.
+  - 8 of 20 after it; trip 20 was the one removed.
+- **Not verified:** the live site after this change (not pushed yet).

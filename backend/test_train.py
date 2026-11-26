@@ -10,7 +10,7 @@ from shade import WALKING_SPEED_M_PER_MIN, analyze_route, shift_time
 TIME = "2026-11-27T10:00:00+08:00"
 
 # The PRD's 6 test trips (F-16 method): 4 with a qualifying option, 2 of them needing a transfer,
-# and 2 with no station within 1 km.
+# and 2 with no station within 2 km.
 WITH_OPTION = {
     "Katipunan -> Ortigas (transfer)": ((14.6330, 121.0745), (14.5878, 121.0567)),
     "Katipunan -> Ayala (transfer, over 10 km)": ((14.6330, 121.0745), (14.5495, 121.0273)),
@@ -169,6 +169,31 @@ class TrainOptionTests(unittest.TestCase):
         notes = " ".join(response["assumptions"]["train_notes"]).lower()
         self.assertIn("estimate", notes)
         self.assertIn("service status", notes)
+
+    def test_options_worse_than_walking_in_sun_and_time_are_hidden(self, *_mocks):
+        """A 2.4 km trip near Shaw Boulevard: a one-stop ride means more walking, sun and time."""
+        start, destination = (14.58407, 121.04369), (14.57178, 121.05403)
+        start_node, end_node = app.WALKING_GRAPH.nearest_node(start), app.WALKING_GRAPH.nearest_node(destination)
+        options = app.train_candidates(start_node, end_node, TIME, set(), app._Models())
+        self.assertTrue(options)  # some pair qualifies on distance alone
+        status, response = request(start, destination)
+        self.assertEqual(status, 200)
+        walking = [route for route in response["routes"] if route.get("kind") != "train"]
+        trains = [route for route in response["routes"] if route.get("kind") == "train"]
+        for option in options:
+            if option["sun_minutes"] >= min(r["exposure"]["sun_minutes"] for r in walking) and option["total_minutes"] >= min(r["total_minutes"] for r in walking):
+                self.assertFalse(any(t["summary"] == f"{option['boarding'].name} → {option['alighting'].name}" for t in trains))
+        # Shown options always beat walking in sun or in time.
+        for train in trains:
+            self.assertTrue(train["exposure"]["sun_minutes"] < min(r["exposure"]["sun_minutes"] for r in walking)
+                            or train["total_minutes"] < min(r["total_minutes"] for r in walking))
+
+    def test_beats_walking_rule(self, *_mocks):
+        walk = [{"exposure": {"sun_minutes": 20}, "total_minutes": 30}, {"exposure": {"sun_minutes": 12}, "total_minutes": 34}]
+        self.assertTrue(app.beats_walking({"sun_minutes": 11, "total_minutes": 50}, walk))  # less sun
+        self.assertTrue(app.beats_walking({"sun_minutes": 25, "total_minutes": 29}, walk))  # quicker
+        self.assertFalse(app.beats_walking({"sun_minutes": 12, "total_minutes": 30}, walk))  # equal is not better
+        self.assertTrue(app.beats_walking({"sun_minutes": 99, "total_minutes": 99}, []))  # no walking route
 
     def test_over_10_km_shows_only_the_train_or_the_old_message(self, *_mocks):
         status, response = request(*WITH_OPTION["Katipunan -> Ayala (transfer, over 10 km)"])
