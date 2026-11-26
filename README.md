@@ -53,7 +53,7 @@ The whole app runs on Vercel's free Hobby plan: the website, plus the Python API
 One-time setup:
 
 1. **Turso** ([turso.tech](https://turso.tech)): create a database in the closest region offered. Copy its URL (`libsql://…`) and create a token for it.
-2. **Vercel** ([vercel.com](https://vercel.com)): sign in with GitHub and import this repository. Keep the settings it reads from `vercel.json`.
+2. **Vercel** ([vercel.com](https://vercel.com)): sign in with GitHub and import this repository. Leave **Root Directory** empty (not `frontend`) and keep the settings it reads from `vercel.json`.
 3. In the Vercel project, open **Settings → Environment Variables** and add these two, then redeploy:
    - `TURSO_DATABASE_URL`: the Turso URL
    - `TURSO_AUTH_TOKEN`: the Turso token (a secret; never commit it)
@@ -111,9 +111,10 @@ cloudflared tunnel --url http://127.0.0.1:4173
    - why a route section is labelled sunny, shaded, covered or shade unknown
    - the street's walkability, with buttons to rate it 1–5
    - a button to mark the highlighted stretch as a covered walkway, or remove the mark
-6. Swipe the route sheet up (from anywhere on it) to see the details, and swipe it down again to collapse it. Swiping the collapsed sheet down hides the routes but keeps the trip, so **Find routes** brings them back. The sheet shows:
+6. Twist the map with two fingers (right-drag or Ctrl+drag on a computer) to rotate it; the compass button turns it back to north-up.
+7. Swipe the route sheet up (from anywhere on it) to see the details, and swipe it down again to collapse it. Swiping the collapsed sheet down hides the routes but keeps the trip, so **Find routes** brings them back. The sheet shows:
    - the sun share now, in 15 minutes and in 30 minutes
-   - **Start**, which begins the walk. With a GPS fix the app switches to navigation: a banner with the next turn and its distance, a map that follows you and rotates in your direction of travel, and a bar with time and distance left and the sun on the rest of the route. Without GPS the walk shows "Locating…" and keeps the normal view.
+   - **Start**, which begins the walk. With a GPS fix the app switches to navigation: a banner with the next turn and its distance, a map that follows you and rotates in your direction of travel, and a bar with time and distance left and the sun on the rest of the route. Drag or twist the map to look around; **Re-center** brings it back to you. The walk ends with a summary within about 30 m of the destination. Without GPS the walk shows "Locating…" and keeps the normal view.
 
 The temperature and heat index in the top bar are weather readings for context only. They never change routes or scores.
 

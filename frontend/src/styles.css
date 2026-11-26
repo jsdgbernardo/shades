@@ -37,7 +37,7 @@ button:active:not(:disabled) { transform: scale(.97); transition: transform 100m
 button:disabled { opacity: .5; cursor: default; }
 
 /* Glass surfaces */
-.location-card, .time-pill, .legend, .locate-button, .route-sheet, .float-card, .toast, .place-results, .time-popover {
+.location-card, .time-pill, .legend, .locate-button, .compass-button, .recenter-button, .route-sheet, .float-card, .toast, .place-results, .time-popover {
   background: var(--glass);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
@@ -125,6 +125,13 @@ button:disabled { opacity: .5; cursor: default; }
 .bottom-stack__row > * { pointer-events: auto; }
 .locate-button { display: grid; place-items: center; flex: none; width: 66px; height: 66px; border: 0; border-radius: 50%; color: var(--ink); }
 .locate-button svg { width: 33px; height: 33px; }
+/* Compass above the locate / Re-center button, right-aligned. */
+.map-buttons { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }
+.map-buttons > * { pointer-events: auto; }
+.compass-button { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; }
+.compass-button svg { width: 26px; height: 26px; }
+.recenter-button { display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 16px 0 12px; border: 0; border-radius: 22px; color: var(--blue); font-size: 14px; font-weight: 600; }
+.recenter-button svg { width: 22px; height: 22px; }
 .legend { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 0; padding: 5px 8px; list-style: none; border-radius: 10px; font-size: 11px; font-weight: 500; letter-spacing: .01em; }
 .legend li { display: flex; align-items: center; gap: 4px; }
 .legend svg { width: 20px; }

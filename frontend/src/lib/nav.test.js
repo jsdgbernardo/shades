@@ -2,12 +2,23 @@ import { describe, expect, it } from "vitest";
 import { ARRIVE_METERS, arrivalSummary, bearing, buildManeuvers, hasArrived, headingAt, maneuverText, nextManeuver, turnAngle, turnKind } from "./nav.js";
 
 describe("arrival", () => {
-  it("counts as arrived within 15 m of the end", () => {
-    expect(ARRIVE_METERS).toBe(15);
+  it("counts as arrived within 30 m of the end", () => {
+    expect(ARRIVE_METERS).toBe(30);
     expect(hasArrived(0)).toBe(true);
     expect(hasArrived(15)).toBe(true);
-    expect(hasArrived(16)).toBe(false);
+    expect(hasArrived(30)).toBe(true);
+    expect(hasArrived(31)).toBe(false);
     expect(hasArrived(Number.NaN)).toBe(false);
+  });
+
+  it("counts a straight-line approach to the end, even off the route", () => {
+    // 25 m from the end in a straight line, 60 m along a route that doubles back, off the route.
+    expect(hasArrived(60, 25, false)).toBe(true);
+    expect(hasArrived(60, 31, true)).toBe(false);
+    // Off the route, the distance along it does not count: only the straight line does.
+    expect(hasArrived(20, 45, false)).toBe(false);
+    expect(hasArrived(20, Number.NaN, true)).toBe(true);
+    expect(hasArrived(Number.NaN, Number.NaN, true)).toBe(false);
   });
 
   it("summarises the walk", () => {

@@ -101,7 +101,10 @@ function fitPadding(map) {
 }
 
 const MapView = forwardRef(function MapView(
-  { start, destination, routes, selectedId, userPosition, coveredSections = [], highlight, navigation = null, onTap, onSelectRoute },
+  {
+    start, destination, routes, selectedId, userPosition, coveredSections = [], highlight, navigation = null,
+    following = true, onUserMovedMap, onBearingChange, onTap, onSelectRoute,
+  },
   ref,
 ) {
   const containerRef = useRef(null);
@@ -109,8 +112,8 @@ const MapView = forwardRef(function MapView(
   // The map whose style and route layers have loaded; data effects wait for it.
   const [loadedMap, setLoadedMap] = useState(null);
   const handlers = useRef({});
-  // Taps on the map do nothing while navigating.
-  handlers.current = navigation ? {} : { onTap, onSelectRoute };
+  // Taps on the map do nothing while navigating, so a stray touch cannot cover the navigation bar.
+  handlers.current = navigation ? { onUserMovedMap, onBearingChange } : { onTap, onSelectRoute, onBearingChange };
   const sectionsRef = useRef([]);
   // The map that is currently mounted. A hot reload re-runs effects with a removed map still in
   // state, so effects check against this before touching the map.
@@ -131,6 +134,9 @@ const MapView = forwardRef(function MapView(
     resetView() {
       map?.easeTo({ center: [MAP_CENTER[1], MAP_CENTER[0]], zoom: 17, bearing: 0 });
     },
+    resetNorth() {
+      map?.easeTo({ bearing: 0, duration: 400 });
+    },
   }), [map]);
 
   useEffect(() => {
@@ -144,13 +150,10 @@ const MapView = forwardRef(function MapView(
       maxBounds: MAX_BOUNDS,
       maxPitch: 0,
       pitchWithRotate: false,
-      dragRotate: false,
       attributionControl: false,
     });
-    // North-up outside navigation: no rotate or tilt gestures.
-    instance.touchZoomRotate.disableRotation();
+    // The map turns with a two-finger twist (right-drag or Ctrl+drag on a computer) but never tilts.
     instance.touchPitch.disable();
-    instance.keyboard.disableRotation();
     // Top right, just under the top cards (see .maplibregl-ctrl-top-right), so the sheet never hides it.
     instance.addControl(new AttributionControl({ compact: true }), "top-right");
     instance.on("load", () => {
@@ -158,6 +161,21 @@ const MapView = forwardRef(function MapView(
       setLoadedMap(instance);
     });
     // Tapping a street opens the street details; points are set by search or location only.
+    // A drag or twist by the user (not the app's own animations) while navigating pauses following.
+    const userMoved = (event) => {
+      if (event.originalEvent) handlers.current.onUserMovedMap?.();
+    };
+    instance.on("dragstart", userMoved);
+    instance.on("rotatestart", userMoved);
+    // Report the bearing for the compass button, at most once per frame.
+    let frame = 0;
+    instance.on("rotate", () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        handlers.current.onBearingChange?.(instance.getBearing());
+      });
+    });
     instance.on("click", (event) => {
       const { onTap: tap, onSelectRoute: select } = handlers.current;
       if (!tap && !select) return;
@@ -177,6 +195,7 @@ const MapView = forwardRef(function MapView(
     setMap(instance);
     return () => {
       liveMapRef.current = null;
+      cancelAnimationFrame(frame);
       instance.remove();
     };
   }, []);
@@ -230,9 +249,10 @@ const MapView = forwardRef(function MapView(
     if (!marker.getElement().isConnected) marker.addTo(map);
   }, [map, navigating, userPosition, navigation?.heading]);
 
-  // Navigation mode (PRD F-13, with GPS): follow the user and rotate the map so the direction of
-  // travel points up. Panning and taps are off (the map follows the user). Pinch and wheel zoom
-  // stay on around the centre, which is the user, so the zoom the user picks is kept.
+  // Navigation mode (PRD F-13, with GPS). While `following`, the map keeps the user 60% down the
+  // screen and turns so the direction of travel points up; zooming stays around the centre (the
+  // user) and the zoom the user picks is kept. A drag or twist pauses following (App shows
+  // Re-center); GPS updates then move only the arrow. Taps stay off while navigating.
   // On entering navigation the map zooms to NAV_ZOOM. Rapid GPS updates can cancel that animation,
   // so the zoom stays pending until it is reached or the user zooms by hand.
   const navZoomPendingRef = useRef(false);
@@ -255,21 +275,8 @@ const MapView = forwardRef(function MapView(
   useEffect(() => {
     if (!map || !navigating || map !== liveMapRef.current) return undefined;
     navZoomPendingRef.current = true;
-    map.dragPan.disable();
-    map.keyboard.disable();
-    map.boxZoom.disable();
-    map.scrollZoom.enable({ around: "center" });
-    map.touchZoomRotate.enable({ around: "center" });
-    map.touchZoomRotate.disableRotation();
     return () => {
       if (map !== liveMapRef.current) return;
-      map.dragPan.enable();
-      map.keyboard.enable();
-      map.keyboard.disableRotation();
-      map.boxZoom.enable();
-      map.scrollZoom.enable();
-      map.touchZoomRotate.enable();
-      map.touchZoomRotate.disableRotation();
       // Drop the navigation padding at once (an interrupted animation could leave some behind and
       // offset later fits), then turn back to north-up.
       map.stop();
@@ -277,9 +284,25 @@ const MapView = forwardRef(function MapView(
       map.easeTo({ bearing: 0, duration: 450 });
     };
   }, [map, navigating]);
+  // While following, pinch and wheel zoom keep the user (the centre) in place; otherwise they
+  // zoom around the fingers or the pointer, as usual.
+  const zoomAroundUser = navigating && following;
+  useEffect(() => {
+    if (!map || map !== liveMapRef.current) return;
+    // enable() keeps the old `around` setting when the handler is already on, so switch off first.
+    map.scrollZoom.disable();
+    map.touchZoomRotate.disable();
+    if (zoomAroundUser) {
+      map.scrollZoom.enable({ around: "center" });
+      map.touchZoomRotate.enable({ around: "center" });
+    } else {
+      map.scrollZoom.enable();
+      map.touchZoomRotate.enable();
+    }
+  }, [map, zoomAroundUser]);
 
   useEffect(() => {
-    if (!map || !navigation || map !== liveMapRef.current) return;
+    if (!map || !navigation || !following || map !== liveMapRef.current) return;
     // Do not fight a pinch in progress; the next GPS update catches up.
     if (gestureRef.current) return;
     const height = map.getContainer().clientHeight;
@@ -294,9 +317,9 @@ const MapView = forwardRef(function MapView(
       duration: zooming ? 600 : 450,
       essential: true,
     });
-  }, [map, navigation?.latitude, navigation?.longitude, navigation?.heading]);
+  }, [map, following, navigation?.latitude, navigation?.longitude, navigation?.heading]);
 
-  return <div ref={containerRef} className="map" role="application" aria-label="Map of the Katipunan and Ateneo walking area" />;
+  return <div ref={containerRef} className="map" role="application" aria-label="Map of Metro Manila" />;
 });
 
 export default MapView;

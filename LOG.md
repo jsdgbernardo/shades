@@ -989,3 +989,32 @@ The app can now run without the laptop: the website and the Python API on Vercel
   - 20 trips from 0.6 to 9.5 km apart, at 8:00, 10:00, 12:00 and 15:00: 20 of 20 within 10 s (median 2.11 s, max 4.55 s).
 - **Browser preview:** with a simulated GPS start, search, route and street card worked, with no console errors. The GPS point was sent only in `POST /api/routes`. A covered mark was still listed after the API was restarted, and was then removed.
 - **Not verified:** the real Turso service, the deployed site (including Vercel's path form, cold start, speed and logs), and use on a phone. P-01 is defined on a mobile connection, which these timings are not.
+
+## 2026-11-24: Deployed on Vercel
+
+Live at https://shades-az5g-kohl.vercel.app/ (Vercel Hobby, Singapore region, Turso database). It is public.
+
+- **Deploy problem:** the first two builds failed at the install step. The build passed after the project settings were changed following advice to clear Root Directory; the settings themselves were not inspected. `vercel.json` also moved from `npm ci` to `npm install`.
+- **Live timing** (from the laptop, no mobile network): the same 20 trips as the rehearsal, 0.6 to 9.5 km apart, all within 10 s (median 2.24 s, max 6.15 s). The 9.7 km trip took 5.59 s, then 4.89 s.
+- **Live checks:** search, streets, weather, the 10 km refusal and rating validation answered as expected. A covered mark was saved, listed, seen on its street and removed, so Turso reads and writes work. In the browser at 375 px wide, a search and a route worked with no console errors and no sideways scrolling.
+- **Not verified:** saving a rating, data after a redeploy or on a second device (D-03), coordinates in Vercel's logs (C-04), a cold start after idle time, and use on a phone (GPS, navigation, home screen, mobile-data timing for P-01).
+
+## 2026-11-26: Rotatable map, looking around while navigating, arrival at 30 m
+
+- **Rotation:** the map turns with a two-finger twist (right-drag or Ctrl+drag on a computer) and never tilts. When it is turned, a compass button appears above the locate button; tapping it returns north-up.
+- **Navigation:** the map follows the user as before until they drag or twist it. GPS updates then move only the arrow, and a **Re-center** button returns to following, direction-up. Zooming keeps following. Tapping the compass while navigating turns the map north-up and pauses following. Taps on streets stay off while navigating.
+- **Zoom fix:** zooming while following is meant to keep the user in place, but MapLibre ignores the "around centre" setting when zoom is already on. In the old code too, a wheel zoom moved the user off-centre (to 73%, 91% of the screen in the preview). The handlers are now switched off and on again with the setting.
+- **Arrival:** `ARRIVE_METERS` is 30 (was 15). `hasArrived` also counts a straight-line distance to the route's end within 30 m, so cutting a corner near the end still arrives. A route shorter than about 30 m arrives as soon as the walk starts.
+
+### Verification
+
+- `npx vitest run` → 25 tests, OK (new arrival tests). `npm run build` → OK. Backend: 90 tests, OK.
+- **Browser preview** (`/?simulate-location`, 526 m route from Katipunan to Rizal Library). Gestures were driven with synthetic pointer, mouse and wheel events:
+  - Ctrl+drag turned the map (compass needle at 148.8°). The compass tap returned it north-up, and the compass hid again.
+  - While walking, the arrow held at 50% across and 60% down over five GPS updates.
+  - A drag moved the arrow to 16%, 72%, and the next GPS update did not snap the map back. Re-center appeared and returned the arrow to 50%, 60%. A Ctrl+drag twist also paused following.
+  - A wheel zoom while following kept the arrow at 50%, 60% and showed no Re-center.
+  - Ending the walk brought back the locate button.
+  - Arrival: still navigating at 60 m and 35 m left. The summary card appeared at 27 m.
+- **Known:** the one GPS update that lands while a zoom gesture is finishing is skipped (existing behaviour), so the map re-centres on the next update.
+- **Not verified:** real two-finger twist and pan on a phone, and arrival on a real walk.

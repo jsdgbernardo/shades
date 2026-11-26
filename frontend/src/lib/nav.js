@@ -94,10 +94,15 @@ export function nextManeuver(maneuvers, along, total) {
 }
 
 /** Within this distance of the end of the route, the walk counts as arrived. */
-export const ARRIVE_METERS = 15;
+export const ARRIVE_METERS = 30;
 
-export function hasArrived(distanceLeft) {
-  return Number.isFinite(distanceLeft) && distanceLeft <= ARRIVE_METERS;
+/**
+ * Arrived when the distance left along the route is within ARRIVE_METERS while on the route, or
+ * when the end is that close in a straight line (cutting a corner, or reaching it from another side).
+ */
+export function hasArrived(distanceLeft, distanceToEnd = Number.POSITIVE_INFINITY, onRoute = true) {
+  const near = (meters) => Number.isFinite(meters) && meters <= ARRIVE_METERS;
+  return (onRoute && near(distanceLeft)) || near(distanceToEnd);
 }
 
 /** Summary shown when the walk ends at the destination. */

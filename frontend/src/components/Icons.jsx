@@ -33,6 +33,15 @@ export const LocateIcon = () => (
   </svg>
 );
 
+/** North needle; `bearing` is the map's rotation in degrees, so the needle keeps pointing north. */
+export const CompassIcon = ({ bearing = 0 }) => (
+  <svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" style={{ transform: `rotate(${-bearing}deg)` }}>
+    <path d="M14 3.5 18 14h-8Z" fill="#c8402f" />
+    <path d="M14 24.5 10 14h8Z" fill="#9aa0a6" />
+    <circle cx="14" cy="14" r="1.6" fill="#fff" />
+  </svg>
+);
+
 export const WalkIcon = () => (
   <svg viewBox="0 0 20 20" width="16" height="16" {...base}>
     <circle cx="11" cy="3.6" r="1.6" /><path d="m8 18 2-5.5 2.5 2.5V18M7 10l2-3.5 3 1 1.5 3M10 6.5 9 12" />

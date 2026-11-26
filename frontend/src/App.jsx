@@ -4,10 +4,10 @@ import LocationCard from "./components/LocationCard.jsx";
 import TimePill from "./components/TimePill.jsx";
 import RouteSheet from "./components/RouteSheet.jsx";
 import Legend from "./components/Legend.jsx";
-import { LocateIcon } from "./components/Icons.jsx";
+import { CompassIcon, LocateIcon } from "./components/Icons.jsx";
 import StreetModal from "./components/StreetPanel.jsx";
 import { ConnectionError, fetchHealth, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, setCovered } from "./lib/api.js";
-import { isOffRoute, projectOntoRoute, remainingFigures } from "./lib/geo.js";
+import { haversineMeters, isOffRoute, projectOntoRoute, remainingFigures } from "./lib/geo.js";
 import { arrivalSummary, buildManeuvers, cumulative, hasArrived, headingAt, nextManeuver } from "./lib/nav.js";
 import { ArrivalCard, NavBanner, NavBar } from "./components/NavPanel.jsx";
 import { MAX_ACCURACY_METERS, geolocation, locationProblem } from "./lib/location.js";
@@ -272,8 +272,10 @@ export default function App() {
     const nav = routeNavRef.current;
     const heading = headingAt(route.geometry, projection.along, nav.distances);
     const maneuver = nextManeuver(nav.maneuvers, projection.along, nav.total);
-    // Arrived: within 15 m of the end while on the route. End the walk and show the summary.
-    if (!isOffRoute(projection.distanceFromRoute) && hasArrived(remaining.distance_m)) {
+    // Arrived: within ARRIVE_METERS of the end, along the route or in a straight line (for cutting
+    // a corner or reaching it from another side). End the walk and show the summary.
+    const toEnd = haversineMeters([longitude, latitude], route.geometry[route.geometry.length - 1]);
+    if (hasArrived(remaining.distance_m, toEnd, !isOffRoute(projection.distanceFromRoute))) {
       arriveRef.current?.(route);
       return;
     }
@@ -327,6 +329,7 @@ export default function App() {
   }, [walk.active, handlePosition]);
 
   const startWalk = () => {
+    setFollowing(true);
     promptDismissedRef.current = false;
     closeTap();
     setArrival(null);
@@ -338,6 +341,7 @@ export default function App() {
     : null;
   const stopWalk = () => {
     setWalk({ active: false });
+    setFollowing(true);
     setUserPosition(null);
     setOffRoute(null);
     positionRef.current = null;
@@ -364,6 +368,16 @@ export default function App() {
   };
   const declineReroute = () => { promptDismissedRef.current = true; setOffRoute(null); };
 
+  // Map rotation (compass) and, while navigating, whether the map follows the user (Re-center).
+  const [bearing, setBearing] = useState(0);
+  const [following, setFollowing] = useState(true);
+  const resetNorth = () => {
+    // During navigation, north-up means looking around: stop following so GPS does not turn it back.
+    if (navigation) setFollowing(false);
+    mapRef.current?.resetNorth();
+  };
+  const rotated = Math.abs(((bearing % 360) + 540) % 360 - 180) > 2;
+
   const locateButton = () => {
     if (walk.active && userPosition) mapRef.current?.panTo(userPosition.latitude, userPosition.longitude);
     else locate(!start);
@@ -382,6 +396,9 @@ export default function App() {
           coveredSections={openCoveredSection}
           highlight={street?.section?.geometry ?? null}
           navigation={navigation}
+          following={following}
+          onUserMovedMap={() => setFollowing(false)}
+          onBearingChange={setBearing}
           onTap={handleTap}
           onSelectRoute={setSelectedId}
         />
@@ -426,8 +443,13 @@ export default function App() {
           onSelectTime={setTimeOffset}
           accessory={<>
             {status === "results" ? <Legend labels={legendLabels} /> : <span />}
-            {/* The map already follows the user while navigating. */}
-            {!navigation && <button type="button" className="locate-button" onClick={locateButton} aria-label="Show my location"><LocateIcon /></button>}
+            <div className="map-buttons">
+              {rotated && <button type="button" className="compass-button" onClick={resetNorth} aria-label="Turn the map north up"><CompassIcon bearing={bearing} /></button>}
+              {/* While navigating the map follows the user, until they move it: then Re-center. */}
+              {navigation
+                ? !following && <button type="button" className="recenter-button" onClick={() => setFollowing(true)}><LocateIcon /> Re-center</button>
+                : <button type="button" className="locate-button" onClick={locateButton} aria-label="Show my location"><LocateIcon /></button>}
+            </div>
           </>}
           overlay={offRoute ? (
             <section className="float-card reroute-card" role="alertdialog" aria-label="Off route">
