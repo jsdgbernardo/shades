@@ -23,6 +23,8 @@ function simulatedProvider() {
     emit();
   };
   window.__shadesDenyLocation = () => { denied = true; emit(); };
+  // Which way the phone points (degrees from north), for the cone on the dot (lib/compass.js).
+  window.__shadesSetHeading = (degrees) => window.dispatchEvent(new CustomEvent("shades:heading", { detail: degrees }));
   return {
     getCurrentPosition(success, failure) {
       setTimeout(() => {
@@ -46,10 +48,14 @@ function simulatedProvider() {
 
 let provider = null;
 
+/** True in development with ?simulate-location in the address. */
+export function isSimulated() {
+  return Boolean(import.meta.env.DEV) && typeof window !== "undefined" && new URLSearchParams(window.location.search).has("simulate-location");
+}
+
 export function geolocation() {
   if (provider) return provider;
-  const simulate = import.meta.env.DEV && typeof window !== "undefined" && new URLSearchParams(window.location.search).has("simulate-location");
-  provider = simulate ? simulatedProvider() : (typeof navigator !== "undefined" ? navigator.geolocation : null);
+  provider = isSimulated() ? simulatedProvider() : (typeof navigator !== "undefined" ? navigator.geolocation : null);
   return provider;
 }
 

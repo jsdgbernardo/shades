@@ -111,8 +111,9 @@ cloudflared tunnel --url http://127.0.0.1:4173
    - why a route section is labelled sunny, shaded, covered or shade unknown
    - the street's walkability, with buttons to rate it 1–5
    - a button to mark the highlighted stretch as a covered walkway, or remove the mark
-6. Twist the map with two fingers (right-drag or Ctrl+drag on a computer) to rotate it; the compass button turns it back to north-up.
-7. Swipe the route sheet up (from anywhere on it) to see the details, and swipe it down again to collapse it. Swiping the collapsed sheet down hides the routes but keeps the trip, so **Find routes** brings them back. The sheet shows:
+6. Your position shows as a blue dot whenever the app is open, with a cone toward where the phone points. On iPhone, allow motion and orientation access the first time you tap the locate button or **Start**.
+7. Twist the map with two fingers (right-drag or Ctrl+drag on a computer) to rotate it; the compass button turns it back to north-up.
+8. Swipe the route sheet up (from anywhere on it) to see the details, and swipe it down again to collapse it. Swiping the collapsed sheet down hides the routes but keeps the trip, so **Find routes** brings them back. The sheet shows:
    - the sun share now, in 15 minutes and in 30 minutes
    - **Start**, which begins the walk. With a GPS fix the app switches to navigation: a banner with the next turn and its distance, a map that follows you and rotates in your direction of travel, and a bar with time and distance left and the sun on the rest of the route. Drag or twist the map to look around; **Re-center** brings it back to you. The walk ends with a summary within about 30 m of the destination. Without GPS the walk shows "Locating…" and keeps the normal view.
 
@@ -144,6 +145,7 @@ The weight of 3 is a design choice, not a PRD value. The PRD requires only that 
 In development, open `http://127.0.0.1:5173/?simulate-location`. Then use the browser console:
 - `window.__shadesSetLocation(14.6407, 121.0748, 8)` sets the position (latitude, longitude, accuracy in metres).
 - `window.__shadesDenyLocation()` simulates refused location permission.
+- `window.__shadesSetHeading(90)` points the simulated phone east, for the cone.
 
 ## API
 

@@ -63,7 +63,8 @@ cd frontend; npm run build
 - `area.py`: the study area (a Metro Manila box), the 0.02° tile grid (`tile_of`, shared by build and runtime) and `MAX_TRIP_M` (10 km).
 - `build_tiles.py` (build only, pyosmium): streams the PBF and writes:
   - `datasets/tiles/{col}_{row}.json.gz`: walkable nodes, directed edges `[a, b, length, way]` (each in its start node's tile) and way labels
-  - `datasets/derived/places.db` (FTS5), `unknown-height-cells.bin` (D-01) and `build-info.json` (counts)
+  - `datasets/derived/places.db` (FTS5), through `build_places.py`, which can also run on its own from the PBF plus the committed tiles. Each place gets an `address` ("Street, City": tagged `addr:street` or the nearest named street within 150 m, then the containing admin_level=6 boundary)
+  - `unknown-height-cells.bin` (D-01) and `build-info.json` (counts)
   - `datasets/derived/ways.db` (way → tiles), through `build_ways.py`, which can also rebuild it from the committed tiles alone
   - Indoor edges (C-01) and disconnected fragments under 200 nodes are dropped here.
 - `tiles.py`: `TileStore` loads tiles lazily into an LRU cache and answers `neighbors`, `nodes_near` and `edges_near`. `tiles_of_way` uses `ways.db` to load a street's tiles, so saved ratings and marks resolve right after a restart.
@@ -96,7 +97,7 @@ cd frontend; npm run build
   - Points travel only in POST bodies, never in URLs, because hosts log URLs (C-04).
   - `log_message` is silenced so locations are never logged (C-04).
 - `weather.py`: Open-Meteo hourly UV, temperature and humidity, plus an NWS heat index. Each reading is `{"status": "available"|"not available"}`. Failures are not cached.
-- `places.py`: offline FTS5 search over `places.db` (prefix matches first, then by distance to the other trip point via `near=lat,lon`).
+- `places.py`: offline FTS5 search over `places.db` (prefix matches first, then by distance to the other trip point via `near=lat,lon`). Matches names only; each result carries `address` (empty with an older index that has no such column), shown as `kind · address` in `LocationCard`.
 - `storage.py`: `open_store()` picks `TursoStore` (hosted SQLite over https with `urllib`) when `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, `NoStore` on Vercel without them, and otherwise `Store`: SQLite in `data/shades.db` (gitignored), one connection per call because the server is threaded. When the store raises `StoreError`, routes still work and saves return 503. Streets with fewer than 3 ratings show "not enough ratings". Route walkability is the length-weighted average over rated streets.
 
 **Frontend** (`frontend/src/`):
@@ -114,10 +115,12 @@ cd frontend; npm run build
   - Section styles differ by pattern as well as colour (S-04).
   - Taps go to `onTap(latlng, section | null)` (I-01).
 - `components/RouteSheet.jsx` is the whole bottom stack: the legend and locate row, then a drag sheet (peek ↔ expanded, physics in `lib/spring.js` per SKILL.md) or an `overlay` card (street details, off-route prompt) that replaces it. Keep the UI compact and free of how-to text; the user wants most of the map visible at all times.
-- **Navigation mode** (walk + GPS fix): `lib/nav.js` derives manoeuvres from route geometry (bearing change ≥ 30° over ±12 m, merged within 15 m; street names only when the API edge has `named: true`) and the course-up heading. `App.jsx` swaps the top cards for `NavBanner` and the sheet for `NavBar` (`components/NavPanel.jsx`). While `following` (state in `App.jsx`), `MapView` keeps the user 60% down the screen and turns with MapLibre's native bearing so labels stay upright; zooming stays around the user, and the user's zoom is kept across GPS updates. A drag or twist pauses following (`onUserMovedMap`), and GPS updates then move only the arrow until **Re-center**. Taps stay off while navigating. Arrival: within `ARRIVE_METERS` (30 m) of the route's end, along the route or in a straight line (`hasArrived`). GPS denied or unavailable (not timeout) drops back to the normal sheet.
+- **Navigation mode** (walk + GPS fix): `lib/nav.js` derives manoeuvres from route geometry (bearing change ≥ 30° over ±12 m, merged within 15 m; street names only when the API edge has `named: true`) and the course-up heading. `App.jsx` swaps the top cards for `NavBanner` and the sheet for `NavBar` (`components/NavPanel.jsx`). While `following` (state in `App.jsx`), `MapView` keeps the user 60% down the screen and turns with MapLibre's native bearing so labels stay upright; zooming stays around the user, and the user's zoom is kept across GPS updates. A drag or twist pauses following (`onUserMovedMap`), and GPS updates then move only the dot until **Re-center**. Taps stay off while navigating. Arrival: within `ARRIVE_METERS` (30 m) of the route's end, along the route or in a straight line (`hasArrived`). GPS denied or unavailable (not timeout) drops back to the normal sheet.
 - Place search never sends a GPS point as `near` (C-04).
 - `lib/geo.js` projects a position onto the route and computes the remaining figures client-side (F-13).
-- `lib/location.js` handles geolocation errors and accuracy (E-04) and contains the dev simulator.
+- **User position:** one marker in every mode, a blue dot with a cone toward where the phone points (`userElement` in `MapView`, turned on the map plane). Outside walks, `App.jsx` keeps a live `watchPosition` while the page is visible, stopping only if permission is denied; a good fix clears a location notice and fills an empty start. Walks keep their own watcher.
+- `lib/compass.js`: `watchHeading` reads `deviceorientationabsolute` (Android) or `webkitCompassHeading` (iPhone), corrects for landscape, smooths on the circle and reports at most about 10 times a second. `requestCompassPermission` is called from the locate button and **Start** taps, because iPhone only asks after a tap. The heading never leaves the device (C-04).
+- `lib/location.js` handles geolocation errors and accuracy (E-04) and contains the dev simulator (`__shadesSetLocation`, `__shadesDenyLocation`, `__shadesSetHeading`).
 
 **Hosting** (Vercel Hobby, README "Use on your phone without a laptop"): `vercel.json` builds the frontend and rewrites `/api/*` to `api/index.py`, whose `handler` subclasses `app.RequestHandler` and restores the client's path. The bundle has only the files in `includeFiles`; add any new runtime data file there. The disk is read-only, Python is 3.13, and instances start cold, so never rely on state from an earlier request.
 

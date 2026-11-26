@@ -1,5 +1,7 @@
 """Place search (PRD S-02) over a prebuilt SQLite FTS5 index of named OSM features
-(datasets/derived/places.db, written by build_tiles.py). Offline; no external geocoder.
+(datasets/derived/places.db, written by build_places.py). Offline; no external geocoder.
+Each place carries a short address ("Katipunan Avenue, Quezon City") so branches can be told
+apart; search matches names only.
 """
 
 from __future__ import annotations
@@ -44,8 +46,10 @@ class PlaceIndex:
         match = " ".join(f'"{word}"*' for word in words)
         connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
         try:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(places)")}
+            address = "address" if "address" in columns else "''"  # an index built before addresses
             rows = connection.execute(
-                "SELECT name, kind, id, lat, lon FROM places WHERE places MATCH ? ORDER BY rank LIMIT 2000", (match,)
+                f"SELECT name, kind, id, lat, lon, {address} FROM places WHERE places MATCH ? ORDER BY rank LIMIT 2000", (match,)
             ).fetchall()
         finally:
             connection.close()
@@ -57,6 +61,6 @@ class PlaceIndex:
             return (level, distance, name)
 
         return [
-            {"id": identifier, "name": name, "kind": kind, "latitude": lat, "longitude": lon}
-            for name, kind, identifier, lat, lon in sorted(rows, key=score)[:limit]
+            {"id": identifier, "name": name, "kind": kind, "address": address or "", "latitude": lat, "longitude": lon}
+            for name, kind, identifier, lat, lon, address in sorted(rows, key=score)[:limit]
         ]

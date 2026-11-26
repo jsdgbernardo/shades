@@ -10,7 +10,7 @@ https://download.geofabrik.de/asia/philippines-latest.osm.pbf (© OpenStreetMap 
 
 Outputs (committed, read by the stdlib-only API):
 - datasets/tiles/{col}_{row}.json.gz  walking graph per tile (see tiles.py for the format)
-- datasets/derived/places.db          SQLite FTS5 index of named places
+- datasets/derived/places.db          SQLite FTS5 index of named places with addresses (build_places.py)
 - datasets/derived/unknown-height-cells.bin  raster cells of buildings without height (PRD D-01)
 - datasets/derived/build-info.json    counts and source details
 """
@@ -20,7 +20,6 @@ from __future__ import annotations
 import gzip
 import json
 import math
-import sqlite3
 import sys
 import time
 from array import array
@@ -29,10 +28,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import build_places  # noqa: E402
+from build_places import inside  # noqa: E402
 from build_ways import build_ways  # noqa: E402
 from area import COORD_DECIMALS, STUDY_AREA, tile_of  # noqa: E402
 from osm import FootprintIndex, is_enclosed_ground_building  # noqa: E402
-from places import kind_of  # noqa: E402
 from routing import WALKABLE_HIGHWAYS, haversine_meters  # noqa: E402
 from shade import HeightRaster  # noqa: E402
 
@@ -41,12 +41,7 @@ DEFAULT_INPUT = ROOT / "datasets" / "raw" / "philippines-latest.osm.pbf"
 TILES_DIR = ROOT / "datasets" / "tiles"
 DERIVED_DIR = ROOT / "datasets" / "derived"
 MIN_COMPONENT_NODES = 200  # walking fragments smaller than this are dropped (see drop_small_components)
-PLACE_DEDUPE_DEG = 0.002  # the same name within ~200 m is one place (a building and the shop inside it)
 BUILDING_TAGS = ("building", "layer", "min_level", "building:min_level")
-
-
-def inside(latitude: float, longitude: float) -> bool:
-    return STUDY_AREA["south"] <= latitude <= STUDY_AREA["north"] and STUDY_AREA["west"] <= longitude <= STUDY_AREA["east"]
 
 
 def walkable(tags) -> bool:
@@ -59,20 +54,16 @@ def walkable(tags) -> bool:
 
 
 def collect(path: Path):
-    """Single streaming pass with node locations. Keeps only what touches the study area."""
+    """Single streaming pass with node locations. Keeps only what touches the study area.
+    Named places are collected separately by build_places.py."""
     import osmium  # build-only dependency; imported here so tests can use the pure helpers below
 
 
     ways = []        # (way_id, [(node_id, lat, lon)], name, oneway_foot, passage, highway)
     buildings = []   # (ring [(lat, lon)], tags subset)
-    places = []      # (identifier, name, tags, lat, lon)
     margin = 0.05  # a way whose first node is this close to the box may still cross into it
-    processor = osmium.FileProcessor(str(path)).with_locations().with_filter(osmium.filter.KeyFilter("highway", "building", "name"))
+    processor = osmium.FileProcessor(str(path)).with_locations().with_filter(osmium.filter.KeyFilter("highway", "building"))
     for item in processor:
-        if item.is_node():
-            if "name" in item.tags and item.location.valid() and inside(item.location.lat, item.location.lon):
-                places.append((f"n{item.id}", item.tags["name"], dict(item.tags), item.location.lat, item.location.lon))
-            continue
         if not item.is_way() or len(item.nodes) < 2:
             continue
         # Cheap reject on the first node before reading the whole way (most of the country is outside).
@@ -92,15 +83,7 @@ def collect(path: Path):
             ))
         if "building" in tags and len(points) >= 4 and points[0][0] == points[-1][0]:
             buildings.append(([(lat, lon) for _, lat, lon in points], {key: tags[key] for key in BUILDING_TAGS if key in tags}))
-        if tags.get("name"):
-            if "highway" in tags:
-                _, lat, lon = points[len(points) // 2]
-            else:
-                lat = sum(p[1] for p in points) / len(points)
-                lon = sum(p[2] for p in points) / len(points)
-            if inside(lat, lon):
-                places.append((f"w{item.id}", tags["name"], dict(tags), lat, lon))
-    return ways, buildings, places
+    return ways, buildings
 
 
 def build_graph(ways, enclosed: FootprintIndex):
@@ -188,28 +171,6 @@ def write_tiles(tiles) -> int:
     return total
 
 
-def write_places(places) -> int:
-    DERIVED_DIR.mkdir(parents=True, exist_ok=True)
-    path = DERIVED_DIR / "places.db"
-    path.unlink(missing_ok=True)
-    seen = set()
-    rows = []
-    for identifier, name, tags, lat, lon in places:
-        key = (name.casefold(), round(lat / PLACE_DEDUPE_DEG), round(lon / PLACE_DEDUPE_DEG))
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append((name, kind_of(tags).lower(), identifier, round(lat, 6), round(lon, 6)))
-    connection = sqlite3.connect(path)
-    with connection:
-        connection.execute("CREATE VIRTUAL TABLE places USING fts5(name, kind UNINDEXED, id UNINDEXED, lat UNINDEXED, lon UNINDEXED, tokenize='unicode61 remove_diacritics 2')")
-        connection.executemany("INSERT INTO places VALUES (?, ?, ?, ?, ?)", rows)
-        connection.execute("INSERT INTO places(places) VALUES ('optimize')")
-    connection.execute("VACUUM")
-    connection.close()
-    return len(rows)
-
-
 def write_unknown_cells(buildings) -> dict:
     """Raster cells of buildings the height raster reports as 0 m (PRD D-01), for the API to mark unknown."""
     raster = HeightRaster.from_file()
@@ -229,8 +190,8 @@ def main() -> None:
     source = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_INPUT
     started = time.time()
     print(f"Reading {source} ...", flush=True)
-    ways, buildings, places = collect(source)
-    print(f"  {len(ways)} walkable ways, {len(buildings)} buildings, {len(places)} named features ({time.time() - started:.0f} s)", flush=True)
+    ways, buildings = collect(source)
+    print(f"  {len(ways)} walkable ways, {len(buildings)} buildings ({time.time() - started:.0f} s)", flush=True)
 
     enclosed = FootprintIndex([ring for ring, tags in buildings if is_enclosed_ground_building(tags)])
     tiles, excluded, edge_count = build_graph(ways, enclosed)
@@ -242,8 +203,7 @@ def main() -> None:
     build_ways()
     print(f"  {len(tiles)} tiles, {edge_count} directed edges, {excluded} indoor edges dropped, {fragments} fragment edges dropped, {size / 1e6:.1f} MB ({time.time() - started:.0f} s)", flush=True)
 
-    place_count = write_places(places)
-    print(f"  {place_count} places indexed ({time.time() - started:.0f} s)", flush=True)
+    place_count = build_places.build(source)["places"]  # after the tiles: addresses use the nearest street
 
     heights = write_unknown_cells(buildings)
     print(f"  heights: {heights} ({time.time() - started:.0f} s)", flush=True)

@@ -14,7 +14,9 @@ Metro Manila: latitude 14.35–14.79, longitude 120.90–121.15. The area is def
   - **`tiles/{col}_{row}.json.gz`**: the walking graph in 0.02° tiles, about 2.2 km each. The API loads these on demand, and the format is described in `backend/tiles.py`.
     - **Ways kept:** walkable highway types (`routing.WALKABLE_HIGHWAYS`), excluding `access=no/private`, `foot=no` and `indoor=yes`.
     - **Indoor edges removed:** edges through enclosed ground-level buildings are dropped (PRD C-01).
-  - **`derived/places.db`**: a SQLite FTS5 index of named places, used for search. The same name within about 200 m counts as one place.
+  - **`derived/places.db`**: a SQLite FTS5 index of named places, used for search. The same name within about 200 m counts as one place. Written by `backend/build_places.py`, which `build_tiles.py` calls after the tiles; run `py -3.13 backend/build_places.py` on its own to rebuild only this file (it reads the committed tiles).
+    - **Address** (an unindexed column, shown under each result so chain branches can be told apart): "Street, City". The street is `addr:housenumber` + `addr:street` when tagged, otherwise the nearest named walkable street within 150 m; places that are streets have no street part. The city is the containing `boundary=administrative` + `admin_level=6` area (41 cities and municipalities touch the study area), with `addr:city` only where no boundary matches.
+    - **Coverage (2026-11-26 build, 150,860 places):** tagged street 40,412; nearby street 51,866; no street part 58,582 (56,065 of them are streets, 2,517 other places with no named street within 150 m); city from a boundary 150,860; no address 0.
   - **`derived/unknown-height-cells.bin`**: height-raster cells covered by OSM buildings that the raster reports as 0 m tall. The API treats them as unknown height (PRD D-01).
   - **`derived/build-info.json`**: source date, counts and the building-height report.
 

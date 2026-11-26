@@ -1018,3 +1018,38 @@ Live at https://shades-az5g-kohl.vercel.app/ (Vercel Hobby, Singapore region, Tu
   - Arrival: still navigating at 60 m and 35 m left. The summary card appeared at 27 m.
 - **Known:** the one GPS update that lands while a zoom gesture is finishing is skipped (existing behaviour), so the map re-centres on the next update.
 - **Not verified:** real two-finger twist and pan on a phone, and arrival on a real walk.
+
+## 2026-11-26: Addresses in place search
+
+Search results showed only a name and a kind, so branches of a chain (7-Eleven, Jollibee) looked identical. Each result now has a second line `kind · address`, for example "Convenience · 307 Katipunan Avenue, Quezon City", cut with an ellipsis on one line.
+
+- **Build:** new `backend/build_places.py` (pyosmium, build only) makes one pass over the PBF for named places (the same rules as before, now in the shared `place_point` helper; `build_tiles.collect` no longer gathers places) and the admin_level=6 boundaries. `build_tiles.py` calls it after writing the tiles; it also runs on its own in about 3 minutes, so the tiles were not rebuilt.
+- **Address:** `addr:housenumber` + `addr:street` when tagged, otherwise the nearest named walkable street within 150 m from the committed tiles; streets get no street part. City: the containing admin_level=6 boundary (41 touch the study area, named like "Makati", "Quezon City"), then `addr:city`.
+- **Coverage:** 150,860 places. Street: tagged 40,412, nearby 51,866, none 58,582 (56,065 are streets themselves; 2,517 other places). City: from a boundary 150,860, so no place is left without an address. `places.db` grew from 13.4 MB to 16.8 MB.
+- **API:** `/api/places` results gain `address`; search still matches names only. An older `places.db` without the column returns an empty address.
+
+### Verification
+
+- Backend: 94 tests, OK, including new ones: Greenbelt 4 has a Makati address; the nearest 7-Eleven to Katipunan and to Makati have different address lines; a Katipunan Avenue street result is just its city; an index without the address column still works.
+- `npx vitest run` → 31 tests, OK. `npm run build` → OK.
+- **Browser preview** (375 px, then 360 px, against a fresh API on a spare port because the running preview API still had the old code loaded): "7-Eleven" listed "Convenience · Fabian de la Rosa Street, Quezon City", "Convenience · 307 Katipunan Avenue, Quezon City" and so on. A long address was cut with an ellipsis and the page did not scroll sideways.
+- **Known:** the place count is unchanged (150,860, matching `build-info.json`), which is expected since the place rules did not change. Boundary names overlap where cities dispute land (the smallest containing boundary wins).
+- **Not verified:** the deployed site and a phone.
+
+## 2026-11-26: Live blue dot with a heading cone
+
+- **Live dot:** your position now shows whenever the app is open, not only during a walk. A `watchPosition` runs while the page is visible and no walk is active. It stops only if location permission is refused, so a slow first fix no longer leaves the app without a dot. A good fix also clears a "Location unavailable" notice and fills an empty start with "Your Location".
+- **Cone:** `lib/compass.js` reads the phone's compass (`deviceorientationabsolute` on Android, `webkitCompassHeading` on iPhone), corrects for landscape, smooths it across north and reports at most about 10 times a second. The marker turns on the map plane, so the cone stays true on a rotated map. Without a compass, only the dot shows. The heading never leaves the device (C-04).
+- **Walks:** the navigation arrow is replaced by the same dot and cone. The map still turns to the route's direction.
+- **iPhone permission:** asked on the first tap of the locate button or **Start**.
+
+### Verification
+
+- `npx vitest run` → 31 tests, OK (new `compass.test.js`: iPhone and Android readings, missing readings, landscape, smoothing across north). `npm run build` → OK. Backend: 94 tests, OK, together with the address change above.
+- **Browser preview** (`/?simulate-location`, with the new `__shadesSetHeading`):
+  - With no walk, the dot appeared after the first simulated fix and followed a second fix.
+  - The cone turned to 45°, 90° and 200°.
+  - During a walk there was no arrow. The dot and cone sat at 50% across and 60% down.
+  - With the phone heading 0° and the map turned 116.8°, the marker turned −116.8°, the same as the compass needle.
+  - After a failed first check, the first good fix cleared the notice and set "Your Location" as the start.
+- **Not verified:** the real iPhone prompt, a real compass and battery use with the dot always on.

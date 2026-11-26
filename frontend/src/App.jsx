@@ -11,12 +11,15 @@ import { haversineMeters, isOffRoute, projectOntoRoute, remainingFigures } from 
 import { arrivalSummary, buildManeuvers, cumulative, hasArrived, headingAt, nextManeuver } from "./lib/nav.js";
 import { ArrivalCard, NavBanner, NavBar } from "./components/NavPanel.jsx";
 import { MAX_ACCURACY_METERS, geolocation, locationProblem } from "./lib/location.js";
+import { requestCompassPermission, watchHeading } from "./lib/compass.js";
 import { toInputValue, toOffsetIso } from "./lib/time.js";
 
 // Metro Manila until /api/health answers; the API's backend/area.py is the source of truth.
 let studyArea = { south: 14.35, north: 14.79, west: 120.9, east: 121.15 };
 const inStudyArea = (latitude, longitude) =>
   latitude >= studyArea.south && latitude <= studyArea.north && longitude >= studyArea.west && longitude <= studyArea.east;
+// Notices from locationProblem() in lib/location.js.
+const LOCATION_NOTICE = /^(Location (access denied|too imprecise|unavailable)|You are outside)/;
 const GPS_OPTIONS = { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 };
 
 export default function App() {
@@ -186,7 +189,6 @@ export default function App() {
     setStatus("idle");
     setError("");
     setWalk({ active: false });
-    setUserPosition(null);
     setOffRoute(null);
     setArrival(null);
   }, [loadRoutes]);
@@ -328,7 +330,50 @@ export default function App() {
     return () => { end(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [walk.active, handlePosition]);
 
+  // The live blue dot outside walks: follows the user while the page is visible, until location
+  // permission is refused. A slow or failed first fix does not stop it. It never changes the start
+  // point, and positions stay on the device (PRD C-04).
+  useEffect(() => {
+    if (walk.active) return undefined;
+    const geo = geolocation();
+    if (!geo) return undefined;
+    let watchId = null;
+    const onFix = ({ coords: { latitude, longitude, accuracy } }) => {
+      if (accuracy > MAX_ACCURACY_METERS || !inStudyArea(latitude, longitude)) return;
+      setUserPosition({ latitude, longitude });
+      // A good fix after a failed first try: location works after all, so clear the location
+      // notice and use it as the start if none is set yet (as the first try would have).
+      setLocationUsable(true);
+      setMessage((current) => (LOCATION_NOTICE.test(current) ? "" : current));
+      setStart((current) => current ?? { latitude, longitude, source: "gps" });
+    };
+    const onError = (problem) => {
+      if (problem?.code !== 1) return;
+      setUserPosition(null);
+      end();
+    };
+    const begin = () => { if (watchId === null) watchId = geo.watchPosition(onFix, onError, GPS_OPTIONS); };
+    const end = () => { if (watchId !== null) geo.clearWatch(watchId); watchId = null; };
+    const onVisibility = () => (document.hidden ? end() : begin());
+    if (!document.hidden) begin();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { end(); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [walk.active]);
+
+  // Which way the phone points, for the cone on the dot. Paused while the page is hidden.
+  const [heading, setHeading] = useState(null);
+  useEffect(() => {
+    let stop = null;
+    const begin = () => { if (!stop) stop = watchHeading(setHeading); };
+    const end = () => { stop?.(); stop = null; };
+    const onVisibility = () => (document.hidden ? end() : begin());
+    if (!document.hidden) begin();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { end(); document.removeEventListener("visibilitychange", onVisibility); };
+  }, []);
+
   const startWalk = () => {
+    requestCompassPermission();
     setFollowing(true);
     promptDismissedRef.current = false;
     closeTap();
@@ -342,7 +387,6 @@ export default function App() {
   const stopWalk = () => {
     setWalk({ active: false });
     setFollowing(true);
-    setUserPosition(null);
     setOffRoute(null);
     positionRef.current = null;
     // Back from the rotated navigation view: show the whole route again once the map has reset.
@@ -379,7 +423,8 @@ export default function App() {
   const rotated = Math.abs(((bearing % 360) + 540) % 360 - 180) > 2;
 
   const locateButton = () => {
-    if (walk.active && userPosition) mapRef.current?.panTo(userPosition.latitude, userPosition.longitude);
+    requestCompassPermission(); // iPhone asks for the compass only after a tap
+    if (userPosition) mapRef.current?.panTo(userPosition.latitude, userPosition.longitude);
     else locate(!start);
   };
 
@@ -393,6 +438,7 @@ export default function App() {
           routes={mapRoutes}
           selectedId={selectedRoute?.id}
           userPosition={userPosition}
+          heading={heading}
           coveredSections={openCoveredSection}
           highlight={street?.section?.geometry ?? null}
           navigation={navigation}

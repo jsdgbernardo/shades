@@ -69,12 +69,21 @@ function pointElement(kind) {
   return element;
 }
 
-/** Arrow for the user while navigating; the marker is rotated to the heading on the map plane. */
-function headingElement() {
+/**
+ * The user: a blue dot with a cone showing which way the phone points. The marker turns on the
+ * map plane, so the cone stays true when the map is rotated.
+ */
+function userElement() {
   const element = document.createElement("div");
-  element.className = "map-heading";
-  element.style.pointerEvents = "none";
-  element.innerHTML = '<svg viewBox="0 0 32 32" width="32" height="32"><circle cx="16" cy="16" r="13" fill="#1a73e8" stroke="#fff" stroke-width="3"/><path d="M16 8 22 21 16 18 10 21Z" fill="#fff"/></svg>';
+  element.className = "map-user";
+  element.innerHTML = `
+    <svg class="map-user__cone" viewBox="0 0 120 120" width="120" height="120" aria-hidden="true">
+      <defs><radialGradient id="user-cone" cx="60" cy="60" r="56" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#1a73e8" stop-opacity=".55"/><stop offset="1" stop-color="#1a73e8" stop-opacity="0"/>
+      </radialGradient></defs>
+      <path d="M60 60 L32 11.5 A56 56 0 0 1 88 11.5 Z" fill="url(#user-cone)"/>
+    </svg>
+    <span class="map-point map-point--user"><span></span></span>`;
   return element;
 }
 
@@ -103,7 +112,7 @@ function fitPadding(map) {
 const MapView = forwardRef(function MapView(
   {
     start, destination, routes, selectedId, userPosition, coveredSections = [], highlight, navigation = null,
-    following = true, onUserMovedMap, onBearingChange, onTap, onSelectRoute,
+    heading = null, following = true, onUserMovedMap, onBearingChange, onTap, onSelectRoute,
   },
   ref,
 ) {
@@ -221,22 +230,20 @@ const MapView = forwardRef(function MapView(
     return () => markers.forEach((marker) => marker.remove());
   }, [map, loadedMap, start, destination, routes, selectedId, coveredSections, highlight]);
 
-  // The user's position: a dot, or a heading arrow while navigating. Kept as its own marker so a
-  // GPS update every second only moves this marker instead of redrawing the route.
+  // The user's position: the same dot and cone in every mode. Kept as its own marker so a GPS or
+  // compass update only moves this marker instead of redrawing the route.
   const navigating = Boolean(navigation);
   const userMarkerRef = useRef(null);
   useEffect(() => {
     if (!map || map !== liveMapRef.current) return undefined;
-    const marker = navigating
-      ? new Marker({ element: headingElement(), rotationAlignment: "map" })
-      : new Marker({ element: pointElement("user") });
+    const marker = new Marker({ element: userElement(), rotationAlignment: "map" });
     marker.getElement().style.zIndex = "2";
     userMarkerRef.current = marker;
     return () => {
       marker.remove();
       userMarkerRef.current = null;
     };
-  }, [map, navigating]);
+  }, [map]);
   useEffect(() => {
     const marker = userMarkerRef.current;
     if (!map || !marker || map !== liveMapRef.current) return;
@@ -245,9 +252,11 @@ const MapView = forwardRef(function MapView(
       return;
     }
     marker.setLngLat([userPosition.longitude, userPosition.latitude]);
-    if (navigating) marker.setRotation(navigation.heading ?? 0);
+    // Without a compass (most computers) there is just the dot.
+    marker.getElement().classList.toggle("map-user--heading", heading !== null);
+    marker.setRotation(heading ?? 0);
     if (!marker.getElement().isConnected) marker.addTo(map);
-  }, [map, navigating, userPosition, navigation?.heading]);
+  }, [map, userPosition, heading]);
 
   // Navigation mode (PRD F-13, with GPS). While `following`, the map keeps the user 60% down the
   // screen and turns so the direction of travel points up; zooming stays around the centre (the

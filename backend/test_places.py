@@ -43,6 +43,43 @@ class PlaceSearchTests(unittest.TestCase):
         status, response = app.create_places_response({"q": "7-Eleven", "near": {"latitude": 14.6400, "longitude": 121.0750}})
         self.assertEqual((status, response["places"][0]["id"]), (200, near_katipunan[0]["id"]))
 
+    def test_greenbelt_4_has_a_makati_address(self):
+        places = [p for p in app.PLACE_INDEX.search("Greenbelt 4") if p["name"] == "Greenbelt 4"]
+        self.assertTrue(places, "Greenbelt 4 not found")
+        self.assertIn("Makati", places[0]["address"])
+
+    def test_chain_branches_have_different_address_lines(self):
+        katipunan = app.PLACE_INDEX.search("7-Eleven", near=(14.6400, 121.0750))[0]
+        makati = app.PLACE_INDEX.search("7-Eleven", near=(14.5540, 121.0240))[0]
+        self.assertNotEqual(katipunan["id"], makati["id"])
+        self.assertTrue(katipunan["address"] and makati["address"])
+        self.assertNotEqual(katipunan["address"], makati["address"])
+        self.assertIn("Quezon City", katipunan["address"])
+        self.assertIn("Makati", makati["address"])
+
+    def test_street_result_has_a_city_and_no_street_part(self):
+        streets = [p for p in app.PLACE_INDEX.search("Katipunan Avenue") if p["kind"] == "street"]
+        self.assertTrue(streets, "no street result for Katipunan Avenue")
+        address = streets[0]["address"]
+        self.assertTrue(address)
+        self.assertNotIn(",", address)  # just the city: "Street, City" would have a comma
+        self.assertIn(address, {"Quezon City", "Marikina"})  # Katipunan runs through both
+
+    def test_index_without_address_column_still_works(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from places import PlaceIndex
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "old-places.db"
+            connection = sqlite3.connect(path)
+            with connection:
+                connection.execute("CREATE VIRTUAL TABLE places USING fts5(name, kind UNINDEXED, id UNINDEXED, lat UNINDEXED, lon UNINDEXED)")
+                connection.execute("INSERT INTO places VALUES ('Rizal Library', 'library', 'w1', 14.64, 121.08)")
+            connection.close()
+            places = PlaceIndex(path).search("rizal")
+        self.assertEqual([(p["name"], p["address"]) for p in places], [("Rizal Library", "")])
+
     def test_short_or_empty_query_returns_nothing(self):
         self.assertEqual(app.create_places_response({"q": "r"})[1]["places"], [])
         self.assertEqual(app.create_places_response({})[1]["places"], [])

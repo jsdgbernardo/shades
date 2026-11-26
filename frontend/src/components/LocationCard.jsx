@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { searchPlaces } from "../lib/api.js";
 import { OriginIcon, PinIcon, SwapIcon } from "./Icons.jsx";
 
+// Search results: the name, then "kind · address" on one line that ends in an ellipsis.
+const RESULT_STYLE = { flexDirection: "column", alignItems: "stretch", justifyContent: "flex-start", gap: 1 };
+const DETAIL_STYLE = { flex: "none", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textTransform: "none" };
+
 function displayName(point, field) {
   if (!point) return "";
   if (point.source === "gps") return "Your Location";
@@ -59,8 +63,13 @@ function Field({ field, point, other, active, onActivate, onPick, onUseLocation,
             </button></li>
           )}
           {results.map((place) => (
-            <li key={place.id}><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { onPick(field, place); inputRef.current?.blur(); }}>
-              <strong>{place.name}</strong><small>{place.kind}</small>
+            <li key={place.id}><button type="button" style={RESULT_STYLE} onMouseDown={(event) => event.preventDefault()} onClick={() => { onPick(field, place); inputRef.current?.blur(); }}>
+              <strong>{place.name}</strong>
+              {/* Kind and a short address, so two branches of the same chain can be told apart. */}
+              <small style={DETAIL_STYLE}>
+                <span style={{ textTransform: "capitalize" }}>{place.kind}</span>
+                {place.address ? ` · ${place.address}` : ""}
+              </small>
             </button></li>
           ))}
           {query.trim().length >= 2 && !results.length && !searchError && <li className="place-results__empty">No places found in Metro Manila</li>}

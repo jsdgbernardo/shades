@@ -224,8 +224,11 @@ button:disabled { opacity: .5; cursor: default; }
 .reroute-card__actions { display: flex; flex: none; gap: 4px; }
 
 /* Navigation mode (walk with GPS): course-up, user-following map with a turn banner and ETA bar */
-.map-heading { filter: drop-shadow(0 2px 4px rgb(0 0 0 / 35%)); }
-.map-heading svg { display: block; }
+/* The user: a blue dot, with a cone toward where the phone points when the compass is known. */
+.map-user { position: relative; width: 120px; height: 120px; pointer-events: none; }
+.map-user > .map-point { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); }
+.map-user__cone { position: absolute; inset: 0; display: none; }
+.map-user--heading .map-user__cone { display: block; }
 /* Brand brown, a touch darker (#ad631e) and solid so white text clears WCAG AA 4.5:1 (4.58:1). */
 .nav-banner { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius); color: #fff; background: #ad631e; box-shadow: var(--shadow); }
 .nav-banner__icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 10px; background: rgb(255 255 255 / 16%); }
