@@ -1053,3 +1053,56 @@ Search results showed only a name and a kind, so branches of a chain (7-Eleven, 
   - With the phone heading 0° and the map turned 116.8°, the marker turned −116.8°, the same as the compass needle.
   - After a failed first check, the first good fix cleared the notice and set "Your Location" as the start.
 - **Not verified:** the real iPhone prompt, a real compass and battery use with the dot always on.
+
+## 2026-11-26: Choose on map for the origin and destination
+
+PRD S-02 now allows either point to be chosen on the map, as the user asked. An ordinary map tap still only opens street details.
+
+- **Flow:**
+  - Both fields' lists show **Choose on map** (for the origin, under **Current location**).
+  - A pin in the field's colour stays fixed at the map centre while the map is dragged under it; it lifts while the map moves.
+  - **Where the map starts:** the field's current point, or the user's dot, or where the map already is.
+  - **The bottom card** reads the street under the pin: a named street ("Near Katipunan Avenue"), plain words for an unnamed way ("Near a service road"), "No street nearby" beyond 25 m, or "Outside Metro Manila" (Set disabled).
+  - **Set** stores `{ source: "pin", name: "Pinned · <street>" }`, or "Pinned origin" / "Pinned destination" when no named street is near. Cancel changes nothing.
+  - Not offered during a walk.
+- **API:** `street_payload` now includes `named`, so the card can tell a real street name from a path type.
+- **Fixes found while testing:**
+  - The lookup did not run when the map was already centred on the starting point; it now looks up that spot directly.
+  - "Near a service" became "Near a service road".
+  - At 360 px the card text was cut short; it now wraps onto two lines.
+
+### Verification
+
+- `npx vitest run` → 34 tests, OK (new `pin.test.js`). `npm run build` → OK. Backend tests OK (the nearest-street test also checks `named`).
+- **Browser preview** at 360 × 740 (`/?simulate-location`):
+  - The pin tip sat exactly on the map centre (0 px off).
+  - After a drag onto a field, the card read "No street nearby". After a drag onto a footway, it read "Near a footpath"; Set gave "Pinned destination", and **Find routes** returned a 237 m route to it.
+  - Origin Choose on map, then Cancel: the origin stayed "Your Location" and the routes stayed.
+  - Dragged north of 14.79°: "Outside Metro Manila" with Set disabled. The text fit with no sideways scrolling.
+  - An ordinary tap on Katipunan Avenue afterwards opened its street card and changed neither point.
+- **Not verified:** dragging with a finger on a phone.
+
+## 2026-11-26: More ratings and covered marks from walks
+
+Ratings and covered marks are crowdsourced, but rating needed a street tap first, and covered walkways could not be marked during a walk. The user chose three changes.
+
+- **Rate after a walk** (PRD S-08 updated):
+  - **When:** the arrival card, and **End** after at least half the route, list up to 3 named streets from the walked part, 30 m or longer, longest first, each with 1–5 buttons. **Skip** or **Done** closes it.
+  - **One street, many pieces:** OSM splits one street into many ways. The 1.1 km test route's Katipunan Avenue was 10 ways, so streets are grouped by name, and one rating goes to each walked piece.
+  - **Never asked twice:** streets rated on the phone (after a walk or in the street card) are remembered in `localStorage` and never asked about again.
+- **Covered here** (PRD S-10 updated): a button in the navigation bar marks the route edge being walked as covered, with Undo for 5 seconds. The walk's own figures don't change; routes found afterwards count the mark.
+- **Date-only timestamps** (PRD C-04 updated): new ratings and covered marks store only the date, so ratings saved together from one walk cannot be lined up into the trip.
+
+### Verification
+
+- `npx vitest run` → 41 tests, OK. New tests cover:
+  - `streetsToRate`: walked part only, grouping by name, short, unnamed and already rated streets, the limit
+  - `edgeAt`
+  - the rated-street memory, including blocked storage
+- Backend tests OK, with a new test that saved records keep the date only. `npm run build` → OK.
+- **Browser preview** at 360 × 740 (`/?simulate-location`, 1.1 km Katipunan → UP Town Center, preview database):
+  - **Covered here** at 40%: PUT for the walked edge, listed by `/api/covered`. **Undo** sent DELETE, and the list was back to before.
+  - **End** at 20%: no prompt. **End** at 60%: "Katipunan Avenue 640 m".
+  - **Arrival:** "Katipunan Avenue 880 m". A rating of 4 sent 10 POSTs, one per piece, and stored the 10 ids on the phone. A second walk asked nothing.
+  - After rating, the card showed "Thanks · 5/5" and a single **Done**. No sideways scrolling, no console errors.
+- **Not verified:** use on a phone, and whether people actually answer.

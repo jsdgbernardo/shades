@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS covered_marks (
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """The date only (UTC). Several ratings saved at the same second would trace one person's walk,
+    and location must not be stored (PRD C-04)."""
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 class StoreError(Exception):

@@ -93,6 +93,17 @@ export function nextManeuver(maneuvers, along, total) {
   return { ...next, distance: next.along - along };
 }
 
+/**
+ * The route edge (API `edges[i]`, the stretch from geometry point i to i + 1) at `along` metres
+ * from the start, given the cumulative `distances` of the geometry. Null without edges.
+ */
+export function edgeAt(edges, distances, along) {
+  if (!edges?.length) return null;
+  let index = 0;
+  while (index < edges.length - 1 && distances[index + 1] <= along) index += 1;
+  return edges[index];
+}
+
 /** Within this distance of the end of the route, the walk counts as arrived. */
 export const ARRIVE_METERS = 30;
 

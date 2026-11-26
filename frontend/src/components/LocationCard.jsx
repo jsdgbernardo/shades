@@ -12,7 +12,7 @@ function displayName(point, field) {
   return point.name || (field === "start" ? "Pinned start" : "Pinned destination");
 }
 
-function Field({ field, point, other, active, onActivate, onPick, onUseLocation, locationUsable = true }) {
+function Field({ field, point, other, active, onActivate, onPick, onUseLocation, onChooseOnMap, locationUsable = true }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const [results, setResults] = useState([]);
@@ -55,11 +55,16 @@ function Field({ field, point, other, active, onActivate, onPick, onUseLocation,
           if (event.key === "Enter" && results[0]) { onPick(field, results[0]); inputRef.current?.blur(); }
         }}
       />
-      {editing && (field === "start" || query.trim().length >= 2) && (
+      {editing && (field === "start" || onChooseOnMap || query.trim().length >= 2) && (
         <ul className="place-results" role="listbox">
           {field === "start" && (
             <li><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { onUseLocation(); inputRef.current?.blur(); }}>
               <strong>Current location</strong>
+            </button></li>
+          )}
+          {onChooseOnMap && (
+            <li><button type="button" className="place-results__pin" onMouseDown={(event) => event.preventDefault()} onClick={() => { inputRef.current?.blur(); onChooseOnMap(field); }}>
+              <PinIcon /><strong>Choose on map</strong>
             </button></li>
           )}
           {results.map((place) => (
@@ -80,13 +85,13 @@ function Field({ field, point, other, active, onActivate, onPick, onUseLocation,
   );
 }
 
-export default function LocationCard({ start, destination, activeField, onActivate, onPick, onSwap, onUseLocation, locationUsable }) {
+export default function LocationCard({ start, destination, activeField, onActivate, onPick, onSwap, onUseLocation, onChooseOnMap, locationUsable }) {
   return (
     <section className="location-card" aria-label="Trip">
       <div className="location-card__rows">
-        <Field field="start" point={start} other={destination} active={activeField === "start"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} locationUsable={locationUsable} />
+        <Field field="start" point={start} other={destination} active={activeField === "start"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} onChooseOnMap={onChooseOnMap} locationUsable={locationUsable} />
         <span className="location-card__connector" aria-hidden="true" />
-        <Field field="destination" point={destination} other={start} active={activeField === "destination"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} locationUsable={locationUsable} />
+        <Field field="destination" point={destination} other={start} active={activeField === "destination"} onActivate={onActivate} onPick={onPick} onUseLocation={onUseLocation} onChooseOnMap={onChooseOnMap} locationUsable={locationUsable} />
       </div>
       <button type="button" className="swap-button" onClick={onSwap} aria-label="Swap start and destination"><SwapIcon /></button>
     </section>

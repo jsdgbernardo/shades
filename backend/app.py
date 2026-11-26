@@ -253,7 +253,13 @@ def street_payload(way_id: int) -> dict[str, Any]:
         score = {"status": "not available", "rating_count": None, "average": None}
     else:
         score = street_score(*stats.get(way_id, (0, None)))
-    return {"way_id": way_id, "name": WALKING_GRAPH.way_names.get(way_id, "Street"), "walkability": {"basis": "user ratings", **score}}
+    return {
+        "way_id": way_id,
+        "name": WALKING_GRAPH.way_names.get(way_id, "Street"),
+        # False when `name` is only the path type ("Footway"), as for unnamed ways.
+        "named": WALKING_GRAPH.is_named(way_id),
+        "walkability": {"basis": "user ratings", **score},
+    }
 
 
 def create_street_response(way_id: int) -> tuple[int, dict[str, Any]]:

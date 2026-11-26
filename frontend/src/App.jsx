@@ -6,10 +6,13 @@ import RouteSheet from "./components/RouteSheet.jsx";
 import Legend from "./components/Legend.jsx";
 import { CompassIcon, LocateIcon } from "./components/Icons.jsx";
 import StreetModal from "./components/StreetPanel.jsx";
+import PinCard from "./components/PinCard.jsx";
+import { pinnedName } from "./lib/pin.js";
 import { ConnectionError, fetchHealth, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, setCovered } from "./lib/api.js";
 import { haversineMeters, isOffRoute, projectOntoRoute, remainingFigures } from "./lib/geo.js";
-import { arrivalSummary, buildManeuvers, cumulative, hasArrived, headingAt, nextManeuver } from "./lib/nav.js";
-import { ArrivalCard, NavBanner, NavBar } from "./components/NavPanel.jsx";
+import { arrivalSummary, buildManeuvers, cumulative, edgeAt, hasArrived, headingAt, nextManeuver } from "./lib/nav.js";
+import { ArrivalCard, NavBanner, NavBar, RateWalkCard } from "./components/NavPanel.jsx";
+import { rememberRated, ratedStreets, streetsToRate } from "./lib/ratePrompt.js";
 import { MAX_ACCURACY_METERS, geolocation, locationProblem } from "./lib/location.js";
 import { requestCompassPermission, watchHeading } from "./lib/compass.js";
 import { toInputValue, toOffsetIso } from "./lib/time.js";
@@ -225,6 +228,7 @@ export default function App() {
     setStreetBusy(true);
     try {
       const updated = await rateStreet(street.way_id, value);
+      rememberRated(street.way_id); // not asked about again after a walk
       setStreet((current) => ({ ...current, walkability: updated.walkability }));
       setStreetNotice(`Thanks. You rated ${updated.name} ${value} out of 5.`);
       if (data) loadRoutes(); // refresh routes already shown; never start a new search
@@ -261,6 +265,51 @@ export default function App() {
 
   const swap = () => { setStart(destination); setDestination(start); };
 
+  // Choose on map (PRD S-02): a pin fixed at the centre of the map while the user drags the map
+  // under it. Ordinary taps still open street details and never move a point.
+  const [picking, setPicking] = useState(null); // null, "start" or "destination"
+  const [pickLookup, setPickLookup] = useState(null);
+  const [pinLifted, setPinLifted] = useState(false);
+  const pickCounter = useRef(0);
+  const pickTimer = useRef(null);
+  const lookUpPin = useCallback((center) => {
+    setPinLifted(false);
+    clearTimeout(pickTimer.current);
+    const id = ++pickCounter.current;
+    if (!center) return;
+    if (!inStudyArea(center.latitude, center.longitude)) { setPickLookup({ outside: true, center }); return; }
+    setPickLookup({ loading: true, center });
+    // Wait for the map to settle; an older answer is ignored.
+    pickTimer.current = setTimeout(async () => {
+      let street = null;
+      try { street = await fetchNearestStreet(center.latitude, center.longitude); } catch { street = null; }
+      if (id === pickCounter.current) setPickLookup({ street, center });
+    }, 250);
+  }, []);
+  const chooseOnMap = (field) => {
+    closeTap();
+    setMessage("");
+    setPicking(field);
+    setPickLookup(null);
+    const point = (field === "start" ? start : destination) ?? userPosition;
+    // Look up the starting spot directly too: if the map is already there it does not move, and
+    // no move-end would trigger the lookup.
+    if (point) {
+      mapRef.current?.centerOn(point.latitude, point.longitude);
+      lookUpPin({ latitude: point.latitude, longitude: point.longitude });
+    } else {
+      lookUpPin(mapRef.current?.getCenter());
+    }
+  };
+  const cancelPick = () => { pickCounter.current += 1; clearTimeout(pickTimer.current); setPicking(null); setPinLifted(false); };
+  const setPin = (streetName) => {
+    const center = pickLookup?.center ?? mapRef.current?.getCenter();
+    if (!center) return;
+    const point = { latitude: center.latitude, longitude: center.longitude, name: pinnedName(picking, streetName), source: "pin" };
+    if (picking === "start") { setStart(point); setActiveField("destination"); } else { setDestination(point); }
+    cancelPick();
+  };
+
   // Live walk: position marker and figures for the route still ahead (PRD F-13, F-14, C-06).
   const handlePosition = useCallback((position) => {
     const { latitude, longitude, accuracy } = position.coords;
@@ -286,6 +335,8 @@ export default function App() {
       remaining,
       heading,
       maneuver,
+      along: projection.along,
+      onRoute: !isOffRoute(projection.distanceFromRoute),
       updatedAt: Date.now(),
       message: accuracy > MAX_ACCURACY_METERS ? `Your location is imprecise (about ±${Math.round(accuracy)} m).` : "",
     } : current));
@@ -374,6 +425,8 @@ export default function App() {
 
   const startWalk = () => {
     requestCompassPermission();
+    setRateWalk(null);
+    setCoveredHere(null);
     setFollowing(true);
     promptDismissedRef.current = false;
     closeTap();
@@ -399,8 +452,67 @@ export default function App() {
   const arriveRef = useRef(null);
   arriveRef.current = (route) => {
     if (!walk.active) return;
-    setArrival({ ...arrivalSummary(route, walk.startedAt ?? Date.now()), place: destination?.name ?? null });
+    setRated({});
+    setArrival({
+      ...arrivalSummary(route, walk.startedAt ?? Date.now()),
+      place: destination?.name ?? null,
+      // A few streets from the walk to rate, never ones this phone already rated (PRD S-08).
+      streets: streetsToRate(route.edges, Number.POSITIVE_INFINITY, ratedStreets()),
+    });
     stopWalk();
+  };
+
+  // Ending a walk past halfway also asks about the streets walked so far; earlier, nothing.
+  const [rateWalk, setRateWalk] = useState(null);
+  const [rated, setRated] = useState({});
+  const endWalk = () => {
+    const route = selectedRouteRef.current;
+    const total = routeNavRef.current.total;
+    const walked = walk.along ?? 0;
+    const streets = route && total > 0 && walked >= total / 2 ? streetsToRate(route.edges, walked, ratedStreets()) : [];
+    setRated({});
+    setRateWalk(streets.length ? { streets } : null);
+    stopWalk();
+  };
+  const rateWalked = async (street, value) => {
+    try {
+      // One rating for each walked piece of the street (OSM often splits one street into several ways).
+      for (const wayId of street.way_ids) {
+        await rateStreet(wayId, value);
+        rememberRated(wayId);
+      }
+      setRated((current) => ({ ...current, [street.name]: value }));
+      if (data) loadRoutes(); // refresh routes already shown; never start a new search
+    } catch {
+      setRated((current) => ({ ...current, [street.name]: "error" }));
+    }
+  };
+
+  // "Covered here": marks the route edge being walked as covered (PRD S-10), with a short Undo.
+  const [coveredHere, setCoveredHere] = useState(null);
+  const coveredTimer = useRef(null);
+  const markCoveredHere = async () => {
+    const route = selectedRouteRef.current;
+    const edge = route && edgeAt(route.edges, routeNavRef.current.distances, walk.along ?? 0);
+    if (!edge) return;
+    clearTimeout(coveredTimer.current);
+    setCoveredHere({ state: "saving", key: edge.edge_key });
+    try {
+      await setCovered(edge.edge_key, true);
+      setCoveredHere({ state: "saved", key: edge.edge_key });
+      coveredTimer.current = setTimeout(() => setCoveredHere(null), 5_000);
+    } catch (failure) {
+      setCoveredHere({ state: "error", message: failure.message });
+      coveredTimer.current = setTimeout(() => setCoveredHere(null), 5_000);
+    }
+  };
+  const undoCoveredHere = async () => {
+    const key = coveredHere?.key;
+    clearTimeout(coveredTimer.current);
+    setCoveredHere(null);
+    if (key) {
+      try { await setCovered(key, false); } catch (failure) { setCoveredHere({ state: "error", message: failure.message }); }
+    }
   };
 
   const acceptReroute = () => {
@@ -442,12 +554,21 @@ export default function App() {
           coveredSections={openCoveredSection}
           highlight={street?.section?.geometry ?? null}
           navigation={navigation}
+          picking={Boolean(picking)}
+          onMoveStart={() => setPinLifted(true)}
+          onMoveEnd={lookUpPin}
           following={following}
           onUserMovedMap={() => setFollowing(false)}
           onBearingChange={setBearing}
           onTap={handleTap}
           onSelectRoute={setSelectedId}
         />
+        {picking && (
+          <div className={`pick-pin pick-pin--${picking} ${pinLifted ? "pick-pin--lifted" : ""}`} aria-hidden="true">
+            <svg viewBox="0 0 30 40" width="30" height="40"><path d="M15 39S2 23.5 2 14.5a13 13 0 1 1 26 0C28 23.5 15 39 15 39Z" /><circle cx="15" cy="14.5" r="5" fill="#fff" /></svg>
+            <span className="pick-pin__shadow" />
+          </div>
+        )}
         {!online && <div className="offline-banner" role="alert">No connection. Routes and weather need the internet.</div>}
         <div className="top-controls" ref={topControlsRef}>
           {navigation ? <NavBanner maneuver={walk.maneuver} /> : <>
@@ -459,6 +580,7 @@ export default function App() {
             onPick={handlePick}
             onSwap={swap}
             onUseLocation={() => locate(true)}
+            onChooseOnMap={walk.active ? null : chooseOnMap}
             locationUsable={locationUsable}
           />
           <TimePill
@@ -497,7 +619,9 @@ export default function App() {
                 : <button type="button" className="locate-button" onClick={locateButton} aria-label="Show my location"><LocateIcon /></button>}
             </div>
           </>}
-          overlay={offRoute ? (
+          overlay={picking ? (
+            <PinCard field={picking} lookup={pickLookup} onCancel={cancelPick} onSet={setPin} />
+          ) : offRoute ? (
             <section className="float-card reroute-card" role="alertdialog" aria-label="Off route">
               <span>About <strong>{Math.round(offRoute.distance)} m</strong> off the route. Recalculate from here?</span>
               <div className="reroute-card__actions">
@@ -506,9 +630,18 @@ export default function App() {
               </div>
             </section>
           ) : arrival ? (
-            <ArrivalCard arrival={arrival} onDone={() => setArrival(null)} />
+            <ArrivalCard arrival={arrival} rated={rated} onRate={rateWalked} onDone={() => setArrival(null)} />
+          ) : rateWalk ? (
+            <RateWalkCard streets={rateWalk.streets} rated={rated} onRate={rateWalked} onDone={() => setRateWalk(null)} />
           ) : navigation ? (
-            <NavBar remaining={walk.remaining} message={walk.message} onEnd={stopWalk} />
+            <NavBar
+              remaining={walk.remaining}
+              message={walk.message}
+              onEnd={endWalk}
+              onCoveredHere={walk.onRoute ? markCoveredHere : null}
+              covered={coveredHere}
+              onUndoCovered={undoCoveredHere}
+            />
           ) : tap ? (
             <StreetModal tap={tap} busy={streetBusy} notice={streetNotice} onRate={rate} onToggleCovered={toggleCovered} onClose={closeTap} />
           ) : null}

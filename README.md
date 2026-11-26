@@ -104,7 +104,7 @@ cloudflared tunnel --url http://127.0.0.1:4173
 ## Use the prototype
 
 1. Allow location access to use your current position as the start point. Alternatively, type a place name in **Your Location**.
-2. Type a place name in **Destination**, for example "Rizal Library". Start and destination are set by search or location only; tapping the map does not drop a pin.
+2. Type a place name in **Destination**, for example "Rizal Library". To place a point without a name, choose **Choose on map** in either field's list, move the map under the pin and tap **Set**. An ordinary tap on the map does not drop a pin.
 3. **Leave Now** uses the current time. Tap it to choose another time.
 4. Compare the **Shortest** and **Shadier** route cards. Each shows the share of the route in direct sun, the minutes in the sun, the distance and the walking time.
 5. Tap a coloured section of the route, or any street on the map, to open its details. The details show:
@@ -115,7 +115,7 @@ cloudflared tunnel --url http://127.0.0.1:4173
 7. Twist the map with two fingers (right-drag or Ctrl+drag on a computer) to rotate it; the compass button turns it back to north-up.
 8. Swipe the route sheet up (from anywhere on it) to see the details, and swipe it down again to collapse it. Swiping the collapsed sheet down hides the routes but keeps the trip, so **Find routes** brings them back. The sheet shows:
    - the sun share now, in 15 minutes and in 30 minutes
-   - **Start**, which begins the walk. With a GPS fix the app switches to navigation: a banner with the next turn and its distance, a map that follows you and rotates in your direction of travel, and a bar with time and distance left and the sun on the rest of the route. Drag or twist the map to look around; **Re-center** brings it back to you. The walk ends with a summary within about 30 m of the destination. Without GPS the walk shows "Locating…" and keeps the normal view.
+   - **Start**, which begins the walk. With a GPS fix the app switches to navigation: a banner with the next turn and its distance, a map that follows you and rotates in your direction of travel, and a bar with time and distance left and the sun on the rest of the route. Drag or twist the map to look around; **Re-center** brings it back to you. While walking, **Covered here** marks the stretch you're on as a covered walkway (with Undo). The walk ends with a summary within about 30 m of the destination, with up to 3 of the streets you walked to rate 1–5; streets you've already rated aren't asked again. Ending a walk past halfway asks too. Without GPS the walk shows "Locating…" and keeps the normal view.
 
 The temperature and heat index in the top bar are weather readings for context only. They never change routes or scores.
 

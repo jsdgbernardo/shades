@@ -112,7 +112,7 @@ function fitPadding(map) {
 const MapView = forwardRef(function MapView(
   {
     start, destination, routes, selectedId, userPosition, coveredSections = [], highlight, navigation = null,
-    heading = null, following = true, onUserMovedMap, onBearingChange, onTap, onSelectRoute,
+    heading = null, following = true, onUserMovedMap, picking = false, onMoveStart, onMoveEnd, onBearingChange, onTap, onSelectRoute,
   },
   ref,
 ) {
@@ -122,7 +122,10 @@ const MapView = forwardRef(function MapView(
   const [loadedMap, setLoadedMap] = useState(null);
   const handlers = useRef({});
   // Taps on the map do nothing while navigating, so a stray touch cannot cover the navigation bar.
-  handlers.current = navigation ? { onUserMovedMap, onBearingChange } : { onTap, onSelectRoute, onBearingChange };
+  // While choosing a point on the map, taps do nothing either: the map only reports where it stops.
+  handlers.current = navigation ? { onUserMovedMap, onBearingChange }
+    : picking ? { onBearingChange, onMoveStart, onMoveEnd }
+    : { onTap, onSelectRoute, onBearingChange };
   const sectionsRef = useRef([]);
   // The map that is currently mounted. A hot reload re-runs effects with a removed map still in
   // state, so effects check against this before touching the map.
@@ -145,6 +148,14 @@ const MapView = forwardRef(function MapView(
     },
     resetNorth() {
       map?.easeTo({ bearing: 0, duration: 400 });
+    },
+    getCenter() {
+      if (!map) return null;
+      const { lat, lng } = map.getCenter();
+      return { latitude: lat, longitude: lng };
+    },
+    centerOn(latitude, longitude) {
+      map?.easeTo({ center: [longitude, latitude], zoom: Math.max(map.getZoom(), 17), duration: 400 });
     },
   }), [map]);
 
@@ -175,6 +186,12 @@ const MapView = forwardRef(function MapView(
       if (event.originalEvent) handlers.current.onUserMovedMap?.();
     };
     instance.on("dragstart", userMoved);
+    // The centre pin (choose on map) lifts while the map moves and reads the spot when it stops.
+    instance.on("movestart", () => handlers.current.onMoveStart?.());
+    instance.on("moveend", () => {
+      const { lat, lng } = instance.getCenter();
+      handlers.current.onMoveEnd?.({ latitude: lat, longitude: lng });
+    });
     instance.on("rotatestart", userMoved);
     // Report the bearing for the compass button, at most once per frame.
     let frame = 0;

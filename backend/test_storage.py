@@ -44,6 +44,17 @@ class PersistenceTests(TempStoreCase):
         self.assertEqual(reopened.rating_stats([1001]), {1001: (1, 4.0)})
         self.assertEqual(reopened.covered_edges(), {"1001:1-2"})
 
+    def test_saved_records_keep_the_date_only(self):
+        """No time of day, so ratings from one walk cannot be lined up into a trip (PRD C-04)."""
+        import sqlite3
+        self.store.add_rating(1001, 4)
+        self.store.set_covered("1001:1-2", True)
+        with sqlite3.connect(self.path) as connection:
+            stamps = [row[0] for table in ("ratings", "covered_marks") for row in connection.execute(f"SELECT created_at FROM {table}")]
+        self.assertEqual(len(stamps), 2)
+        for stamp in stamps:
+            self.assertRegex(stamp, r"^\d{4}-\d{2}-\d{2}$")
+
     def test_rating_must_be_whole_number_one_to_five(self):
         for bad in (0, 6, 3.5, "4", None, True):
             with self.subTest(bad=bad):
@@ -130,6 +141,7 @@ class CoveredTests(TempStoreCase):
         status, response = app.create_nearest_street_response({"latitude": 14.6407, "longitude": 121.0748})
         self.assertEqual(status, 200)
         self.assertIn("edge_key", response["section"])
+        self.assertIsInstance(response["named"], bool)
         self.assertFalse(response["section"]["covered"])
         self.assertEqual(response["walkability"]["status"], "not enough ratings")
 
