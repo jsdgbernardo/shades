@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rememberRated, ratedStreets, streetsToRate } from "./ratePrompt.js";
+import { forgetRated, myRating, rememberRated, ratedStreets, streetsToRate } from "./ratePrompt.js";
 import { edgeAt } from "./nav.js";
 
 const edge = (way_id, length_m, name = `Street ${way_id}`, named = true) => ({ way_id, name, named, length_m, edge_key: `${way_id}:${length_m}` });
@@ -45,15 +45,34 @@ describe("streets to rate after a walk", () => {
 describe("remembering rated streets on the phone", () => {
   it("stores and reads way ids", () => {
     const storage = memoryStorage();
-    rememberRated(7, storage);
-    rememberRated(9, storage);
-    rememberRated(7, storage);
+    rememberRated(7, {}, storage);
+    rememberRated(9, {}, storage);
+    rememberRated(7, {}, storage);
     expect([...ratedStreets(storage)]).toEqual([7, 9]);
+  });
+
+  it("keeps each rating and its token, and forgets a removed one", () => {
+    const storage = memoryStorage();
+    rememberRated(7, { rating: 2, token: "a" }, storage);
+    rememberRated(7, { rating: 4 }, storage); // changed: the token stays
+    expect(myRating(7, storage)).toEqual({ rating: 4, token: "a" });
+    expect(myRating(8, storage)).toBeNull();
+    forgetRated(7, storage);
+    expect(myRating(7, storage)).toBeNull();
+    expect(ratedStreets(storage).size).toBe(0);
+  });
+
+  it("still reads the older list of rated ids", () => {
+    const storage = memoryStorage();
+    storage.setItem("shades.ratedStreets", JSON.stringify([5, 6]));
+    expect([...ratedStreets(storage)]).toEqual([5, 6]);
+    expect(myRating(5, storage)).toEqual({});
   });
 
   it("copes with blocked or broken storage", () => {
     const blocked = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
-    expect(() => rememberRated(7, blocked)).not.toThrow();
+    expect(() => rememberRated(7, {}, blocked)).not.toThrow();
+    expect(() => forgetRated(7, blocked)).not.toThrow();
     expect(ratedStreets(blocked).size).toBe(0);
     expect(ratedStreets({ getItem: () => "not json" }).size).toBe(0);
     expect(ratedStreets(null).size).toBe(0);

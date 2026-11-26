@@ -50,8 +50,14 @@ export function fetchNearestStreet(latitude, longitude) {
   return request("/api/streets/nearest", { method: "POST", body: JSON.stringify({ latitude, longitude }) });
 }
 
-export function rateStreet(wayId, rating) {
-  return request(`/api/streets/${wayId}/ratings`, { method: "POST", body: JSON.stringify({ rating }) });
+/** Saves a rating. With this phone's token for the street, its earlier rating is replaced. */
+export function rateStreet(wayId, rating, token = null) {
+  return request(`/api/streets/${wayId}/ratings`, { method: "POST", body: JSON.stringify(token ? { rating, token } : { rating }) });
+}
+
+/** Removes the rating this phone made for a street. */
+export function removeRating(wayId, token) {
+  return request(`/api/streets/${wayId}/ratings`, { method: "DELETE", body: JSON.stringify({ token }) });
 }
 
 export function setCovered(edgeKey, covered) {

@@ -13,7 +13,7 @@ export function walkabilityText(walkability) {
  * labeled as it is (PRD I-01), walkability from user ratings (S-08, S-09), and the
  * covered mark (S-10). No scrim, so the map stays visible and tappable (SKILL.md §12).
  */
-export default function StreetModal({ tap, busy, notice, onRate, onToggleCovered, onClose }) {
+export default function StreetModal({ tap, busy, notice, mine = null, onRate, onRemoveRating, onToggleCovered, onClose }) {
   const { street, section, loading } = tap;
 
   useEffect(() => {
@@ -48,6 +48,12 @@ export default function StreetModal({ tap, busy, notice, onRate, onToggleCovered
             Covered
           </button>
         </div>
+      )}
+      {/* This phone's own rating: tapping a number changes it; Remove takes it back (PRD S-08). */}
+      {street && mine?.token && Number.isInteger(mine.rating) && (
+        <p className="street-card__mine">
+          Your rating: {mine.rating} · <button type="button" className="text-button street-card__remove" disabled={busy} onClick={onRemoveRating}>Remove</button>
+        </p>
       )}
       {notice && <p className="street-card__notice">{notice}</p>}
     </section>

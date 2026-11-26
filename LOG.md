@@ -1106,3 +1106,95 @@ Ratings and covered marks are crowdsourced, but rating needed a street tap first
   - **Arrival:** "Katipunan Avenue 880 m". A rating of 4 sent 10 POSTs, one per piece, and stored the 10 ids on the phone. A second walk asked nothing.
   - After rating, the card showed "Thanks · 5/5" and a single **Done**. No sideways scrolling, no console errors.
 - **Not verified:** use on a phone, and whether people actually answer.
+
+## 2026-11-26: Changing or removing a rating, field-test timing and checklist
+
+- **Change or remove your own rating** (PRD S-08 updated):
+  - **The gap it fixes:** before, rating a street again added another rating, so one person could push a street past the 3-rating threshold alone, and nobody could take a rating back.
+  - **How it works:** each rating now returns a random token. The phone keeps it, and the server stores only its SHA-256 hash. Rating the street again with the token replaces the rating; `DELETE /api/streets/{way}/ratings` with the token removes it.
+  - **Older databases** gain the `token_hash` column on first use, in both SQLite and Turso. Old ratings stay.
+  - **Street card:** shows "Your rating: 4 · Remove".
+- **`?timing` readout** (`lib/timing.js`) for the field tests: Find routes → routes drawn (P-01), and GPS fix → figures drawn during a walk (P-02). Each shows the last time, the slowest and how many went over the limit. It stays on the phone.
+- **`TESTING.md`:** the checks that need a phone, a second device or a real walk, with pass rules and results tables: P-01, P-02, F-13, F-14, S-12, E-04, D-03 and C-04, plus quick checks for the newer features.
+
+### Verification
+
+- **Backend:** 100 tests, OK. New tests cover:
+  - replace, remove, wrong token, a token only working for its own street, a stale token
+  - only the hash stored
+  - an older database gaining the column
+  - the API returning and using the token
+  - Turso against the fake server
+- **Frontend:** `npx vitest run` → 46 tests, OK (new `timing.test.js`; the rating memory also keeps tokens and still reads the older id list). Build OK.
+- **Browser preview** at 360 × 740 (`/?simulate-location&timing`):
+  - A footway's card: rating 2 made "1/3 user ratings · Your rating: 2"; changing to 4 kept the count at 1; **Remove** brought it back to 0 and cleared it on the phone.
+  - The readout showed "Routes 2.77 s" after **Find routes**, and "Fix→figures 0.73 s (max 1.75 s, 0 of 5 over 2 s)" after five simulated fixes. These are laptop preview numbers, not phone ones.
+- **Not verified:** the token flow against the real Turso database. It counts changes with `SELECT changes()` in the same pipeline, which the fake server supports. To be checked on the live site after pushing.
+
+
+## 2026-11-26: Acceptance runs with long trips and against the deployed site
+
+`backend/acceptance.py` now adds 3 seeded long trips, 5–10 km apart in a straight line (6.2, 8.4 and 9.6 km; 7.7–11.7 km walked), across central Metro Manila, alongside the 10 short ones. It also takes `--url BASE`, which POSTs each request to `BASE/api/routes` the way the frontend does, with the points only in the body (C-04), and times the full round trip. HTTP and network errors show as a status in the table. Pairs are still chosen in-process. The short pairs are unchanged, because the long trips use their own random generator.
+
+### In-process (`python backend/acceptance.py`)
+
+- P-01: 39 of 39 within 10 s (median 0.33 s, max 5.47 s). Short trips: 30 of 30 (median 0.15 s, max 2.53 s). Long trips: 9 of 9 (median 3.88 s, max 5.47 s). No HTTP or network time.
+- F-01: 39 of 39 returned routes. F-02: 9 of 13 trips differ across 09:00, 12:00 and 15:00. F-03: 25 of 39 mixed. F-04: 15 of 39 with a shadier alternative.
+
+### Deployed (`python backend/acceptance.py --url https://shades-jsb.vercel.app`)
+
+- P-01: 39 of 39 within 10 s (median 0.61 s, max 7.49 s). Short trips: 30 of 30 (median 0.45 s, max 2.49 s). Long trips: 9 of 9 (median 5.24 s, max 7.49 s; the 9.6 km trip was slowest).
+- F-01 to F-04 match the in-process run, and so do the figures in every row.
+- **Not verified:** these are round trips from a laptop's network connection, not from a phone on mobile data. The longest trip leaves about 2.5 s of headroom under 10 s for a slower network.
+
+### Verification
+
+- Backend tests: 100, OK.
+- A bad payload sent with `--url` came back as status 400, and an unreachable host as `error: gaierror`. Neither crashed the script.
+
+## 2026-11-26: Station data for the train option (stretch, D-04)
+
+This is the first step of the stretch train option (F-16 to F-19). New build-only script `backend/build_rail.py` writes `datasets/derived/rail.json` from the Geofabrik extract. Nothing reads it yet: routing and UI come later.
+
+- **Lines:** LRT-1, LRT-2 and MRT-3 only, picked by OSM `route_master` (ref, network, mode). PNR, the Metro Manila Subway, MRT-7 and the disused LRT-1 Balintawak–Roosevelt routes are left out (C-07).
+- **Shape:** the track ways of the direction with the most stops, joined in member order, with no gaps between ways, trimmed to the terminals. The opposite track is a check only: at most 7.1 m (LRT-1), 14.1 m (LRT-2) and 17.8 m (MRT-3) from the shape.
+- **Station names:** taken from the station feature, then the stop position, then the stop_area. One LRT-1 stop position is named "/" and the stop_area gives "United Nations".
+- **Entrances:** from the stop_area, plus unclaimed entrance nodes within 150 m. Only 2 were added this way, both at United Nations.
+- **Transfers:** the three hand-checked pairs resolve. Straight-line distances: EDSA ↔ Taft Avenue 206 m, Doroteo Jose ↔ Recto 222 m, Araneta Center-Cubao 357 m.
+
+### Build report
+
+| Line | Stations | Mapped entrances | Station-point fallback | Entrance points | Length (terminal to terminal) |
+|---|---|---|---|---|---|
+| LRT Line 1 | 25 | 12 | 13 | 34 | 24.61 km |
+| LRT Line 2 | 13 | 4 | 9 | 10 | 16.63 km |
+| MRT Line 3 | 13 | 4 | 9 | 10 | 16.48 km |
+
+- **Stations with no mapped entrance**, which use the station point:
+  - LRT-1: Balintawak to Bambang, Central Terminal, Pedro Gil, Quirino, Gil Puyat and MIA Road.
+  - LRT-2: every station except Recto, Katipunan, Santolan and Marikina-Pasig.
+  - MRT-3: every station except Araneta Center-Cubao, Shaw Boulevard, Ayala and Taft Avenue.
+- **Study area:** all 51 stations are inside it, including Antipolo at lon 121.121.
+- **File:** 33.0 KB. The build takes about 11 s.
+
+### Check against published line maps
+
+- **Compared with:** the station lists in the Wikipedia articles "LRT Line 1 (Metro Manila)", "LRT Line 2 (Metro Manila)" and "MRT Line 3 (Metro Manila)", read 2026-11-26.
+- **Station count and order:** the same for all three lines (25, 13 and 13 stations). The only name difference is OSM's "Yamaha Monumento" for Monumento.
+- **Lengths:** the published lengths (26, 17.6 and 16.9 km) are longer than ours, as expected, because ours stop at the terminal stations and leave out the tail tracks.
+- **Not verified:**
+  - an official operator map, since only Wikipedia was read
+  - the exact official colour hex values, which come from the OSM tags
+  - whether the stations without mapped entrances really have no other entrances: the fallback point is the stop on the track, not a street-level entrance (D-04's "walking routes end at an entrance" is only approximate for those 31 stations)
+
+### Verification
+
+- **New `backend/test_rail_data.py`** (7 tests) checks the committed file:
+  - only the three lines, with no excluded names
+  - station order against the published lists
+  - positions that increase
+  - at least one entrance per station
+  - transfers that resolve
+  - continuous shapes: stations within 2 m of the shape, no bend sharper than 100°, and track between neighbouring stations shorter than 1.5 × the straight line
+- **Bend check:** the real shapes bend at most 16.5°, and a copy with one stretch reversed bends about 175°, so the check would catch a way joined backwards.
+- **All backend tests:** `python -m unittest discover -s backend -p 'test_*.py'` → 107 tests, OK.

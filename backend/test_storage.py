@@ -44,6 +44,52 @@ class PersistenceTests(TempStoreCase):
         self.assertEqual(reopened.rating_stats([1001]), {1001: (1, 4.0)})
         self.assertEqual(reopened.covered_edges(), {"1001:1-2"})
 
+    def test_a_device_can_change_and_remove_its_rating(self):
+        token = self.store.add_rating(1001, 2)
+        self.store.add_rating(1001, 5)  # someone else
+        self.assertEqual(self.store.add_rating(1001, 4, token), token)  # replaces, does not add
+        self.assertEqual(self.store.rating_stats([1001]), {1001: (2, 4.5)})
+        self.assertFalse(self.store.remove_rating(1001, "wrong-token"))
+        self.assertFalse(self.store.remove_rating(1002, token))  # a token belongs to one street
+        self.assertTrue(self.store.remove_rating(1001, token))
+        self.assertEqual(self.store.rating_stats([1001]), {1001: (1, 5.0)})
+        # A stale token (rating already removed) simply adds a new rating with a new token.
+        fresh = self.store.add_rating(1001, 3, token)
+        self.assertNotEqual(fresh, token)
+        self.assertEqual(self.store.rating_stats([1001])[1001][0], 2)
+
+    def test_only_a_hash_of_the_token_is_stored(self):
+        import sqlite3
+        token = self.store.add_rating(1001, 4)
+        with sqlite3.connect(self.path) as connection:
+            stored = connection.execute("SELECT token_hash FROM ratings").fetchone()[0]
+        self.assertNotEqual(stored, token)
+        self.assertEqual(len(stored), 64)
+
+    def test_older_databases_gain_the_token_column(self):
+        import sqlite3
+        old = Path(self.directory.name) / "old.db"
+        with sqlite3.connect(old) as connection:
+            connection.execute("CREATE TABLE ratings (id INTEGER PRIMARY KEY AUTOINCREMENT, way_id INTEGER NOT NULL, rating INTEGER NOT NULL, created_at TEXT NOT NULL)")
+            connection.execute("INSERT INTO ratings (way_id, rating, created_at) VALUES (7, 3, '2026-11-01T10:00:00+00:00')")
+        store = Store(old)
+        self.assertEqual(store.rating_stats([7]), {7: (1, 3.0)})
+        token = store.add_rating(7, 5)
+        self.assertTrue(store.remove_rating(7, token))
+        self.assertEqual(store.rating_stats([7]), {7: (1, 3.0)})
+
+    def test_rating_api_returns_a_token_and_removes_with_it(self):
+        way = app.WALKING_GRAPH.nearest_edge((14.6407, 121.0748), max_distance_m=60)["way_id"]
+        status, saved = app.create_rating_response(way, {"rating": 2})
+        self.assertEqual(status, 200)
+        status, changed = app.create_rating_response(way, {"rating": 4, "token": saved["token"]})
+        self.assertEqual((status, changed["token"]), (200, saved["token"]))
+        self.assertEqual(self.store.rating_stats([way]), {way: (1, 4.0)})
+        self.assertEqual(app.create_rating_removal_response(way, {"token": "nope"})[0], 404)
+        self.assertEqual(app.create_rating_removal_response(way, {})[0], 400)
+        self.assertEqual(app.create_rating_removal_response(way, {"token": saved["token"]})[0], 200)
+        self.assertEqual(self.store.rating_stats([way]), {})
+
     def test_saved_records_keep_the_date_only(self):
         """No time of day, so ratings from one walk cannot be lined up into a trip (PRD C-04)."""
         import sqlite3

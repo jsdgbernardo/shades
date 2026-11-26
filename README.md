@@ -155,7 +155,8 @@ In development, open `http://127.0.0.1:5173/?simulate-location`. Then use the br
 | `GET /api/weather?time=` | UV, temperature, humidity and heat index for the study area. Each reading is either available or not available. |
 | `POST /api/places` | Takes `{q, near?}` and searches named places in the local OSM extract. |
 | `POST /api/streets/nearest` | Takes `{latitude, longitude}` and returns the street section nearest to a tapped point, with its walkability. |
-| `POST /api/streets/{way_id}/ratings` | Takes `{rating: 1..5}`. |
+| `POST /api/streets/{way_id}/ratings` | Takes `{rating: 1..5, token?}` and returns a `token`. With the token of this device's earlier rating, it replaces that rating. |
+| `DELETE /api/streets/{way_id}/ratings` | Takes `{token}` and removes that rating. |
 | `GET /api/covered` | Lists the sections that users have marked as covered. |
 | `PUT` / `DELETE /api/covered/{edge_key}` | Marks or unmarks a section as covered. |
 
@@ -180,6 +181,10 @@ Acceptance evidence, which uses live weather and prints a Markdown report:
 ```powershell
 python backend\acceptance.py
 ```
+
+## Field tests
+
+`TESTING.md` lists the checks that need a phone, a second device or a real walk (P-01, P-02, F-13, F-14, S-12, E-04, D-03, C-04), with a results table for each. Add `?timing` to the address to show how long routes and walk updates take.
 
 ## Data and scope
 

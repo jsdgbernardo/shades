@@ -6,12 +6,18 @@ Two stores with the same methods, chosen by open_store():
 - TursoStore: the same SQL in a hosted SQLite database (Turso) over https, for hosts that do
   not keep files. Used when TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set.
 No location or personal data is stored (PRD C-04).
+
+A rating can be changed or removed later by the device that made it: saving one returns a random
+token, the device keeps it, and the store keeps only the token's SHA-256 hash. Tokens are random
+per rating, so they do not link one person's ratings together.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import threading
 from contextlib import closing
@@ -28,7 +34,8 @@ CREATE TABLE IF NOT EXISTS ratings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     way_id INTEGER NOT NULL,
     rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    token_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS ratings_way ON ratings (way_id);
 CREATE TABLE IF NOT EXISTS covered_marks (
@@ -36,6 +43,20 @@ CREATE TABLE IF NOT EXISTS covered_marks (
     created_at TEXT NOT NULL
 );
 """
+
+
+# Databases made before rating tokens lack the column; added on first use.
+TOKEN_COLUMN = "ALTER TABLE ratings ADD COLUMN token_hash TEXT"
+TOKEN_INDEX = "CREATE INDEX IF NOT EXISTS ratings_token ON ratings (way_id, token_hash)"
+HAS_TOKEN_COLUMN = "SELECT COUNT(*) FROM pragma_table_info('ratings') WHERE name = 'token_hash'"
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(16)
 
 
 def now() -> str:
@@ -59,14 +80,33 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection, connection:
             connection.executescript(SCHEMA)
+            if not connection.execute(HAS_TOKEN_COLUMN).fetchone()[0]:
+                connection.execute(TOKEN_COLUMN)
+            connection.execute(TOKEN_INDEX)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=10)
 
-    def add_rating(self, way_id: int, rating: int) -> None:
+    def add_rating(self, way_id: int, rating: int, token: str | None = None) -> str:
+        """Saves a rating and returns its token. With the token of this street's earlier rating
+        from the same device, that rating is replaced instead of a new one being added."""
         check_rating(rating)
         with closing(self._connect()) as connection, connection:
-            connection.execute("INSERT INTO ratings (way_id, rating, created_at) VALUES (?, ?, ?)", (way_id, rating, now()))
+            if token and connection.execute(
+                "UPDATE ratings SET rating = ?, created_at = ? WHERE way_id = ? AND token_hash = ?",
+                (rating, now(), way_id, token_hash(token)),
+            ).rowcount:
+                return token
+            token = new_token()
+            connection.execute("INSERT INTO ratings (way_id, rating, created_at, token_hash) VALUES (?, ?, ?, ?)",
+                               (way_id, rating, now(), token_hash(token)))
+            return token
+
+    def remove_rating(self, way_id: int, token: str) -> bool:
+        """Removes the rating made with this token. False when there is none."""
+        with closing(self._connect()) as connection, connection:
+            return connection.execute("DELETE FROM ratings WHERE way_id = ? AND token_hash = ?",
+                                      (way_id, token_hash(str(token)))).rowcount > 0
 
     def rating_stats(self, way_ids: list[int] | None = None) -> dict[int, tuple[int, float]]:
         """way_id -> (number of ratings, average rating)."""
@@ -128,8 +168,16 @@ class TursoStore:
         with self._lock:
             if not self._schema_ready:
                 self._pipeline([(statement.strip(), ()) for statement in SCHEMA.split(";") if statement.strip()])
+                if not self._pipeline([(HAS_TOKEN_COLUMN, ())])[0][0][0]:
+                    self._pipeline([(TOKEN_COLUMN, ())])
+                self._pipeline([(TOKEN_INDEX, ())])
                 self._schema_ready = True
         return self._pipeline([(sql, args)])[0]
+
+    def _changes(self, sql: str, args: tuple) -> int:
+        """Runs a write and returns how many rows it changed."""
+        rows = self._pipeline([(sql, args), ("SELECT changes()", ())])
+        return int(rows[1][0][0])
 
     @staticmethod
     def _encode(value: int | str) -> dict[str, str]:
@@ -142,9 +190,20 @@ class TursoStore:
             return None
         return int(cell["value"]) if kind == "integer" else float(cell["value"]) if kind == "float" else cell["value"]
 
-    def add_rating(self, way_id: int, rating: int) -> None:
+    def add_rating(self, way_id: int, rating: int, token: str | None = None) -> str:
         check_rating(rating)
-        self._run("INSERT INTO ratings (way_id, rating, created_at) VALUES (?, ?, ?)", (way_id, rating, now()))
+        self._run("SELECT 1")  # make sure the schema is ready before counting changes
+        if token and self._changes("UPDATE ratings SET rating = ?, created_at = ? WHERE way_id = ? AND token_hash = ?",
+                                   (rating, now(), way_id, token_hash(token))):
+            return token
+        token = new_token()
+        self._run("INSERT INTO ratings (way_id, rating, created_at, token_hash) VALUES (?, ?, ?, ?)",
+                  (way_id, rating, now(), token_hash(token)))
+        return token
+
+    def remove_rating(self, way_id: int, token: str) -> bool:
+        self._run("SELECT 1")
+        return self._changes("DELETE FROM ratings WHERE way_id = ? AND token_hash = ?", (way_id, token_hash(str(token)))) > 0
 
     def rating_stats(self, way_ids: list[int] | None = None) -> dict[int, tuple[int, float]]:
         unique = sorted(set(way_ids or ()))
@@ -170,7 +229,7 @@ class NoStore:
     def _unavailable(self, *_args: object) -> None:
         raise StoreError("no ratings database is configured")
 
-    add_rating = rating_stats = covered_edges = set_covered = _unavailable
+    add_rating = remove_rating = rating_stats = covered_edges = set_covered = _unavailable
 
 
 def open_store() -> Store | TursoStore | NoStore:

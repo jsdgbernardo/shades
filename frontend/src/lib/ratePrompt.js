@@ -37,23 +37,48 @@ function defaultStorage() {
   }
 }
 
-/** Street (way) ids this phone has rated. Empty if storage is unavailable. */
-export function ratedStreets(storage = defaultStorage()) {
+/**
+ * This phone's ratings: way id -> { rating, token }. The token lets the phone change or remove
+ * its own rating later (the server keeps only a hash of it). An older list of ids still reads.
+ */
+export function myRatings(storage = defaultStorage()) {
   try {
-    const ids = JSON.parse(storage?.getItem(STORAGE_KEY) ?? "[]");
-    return new Set(Array.isArray(ids) ? ids.filter(Number.isInteger) : []);
+    const saved = JSON.parse(storage?.getItem(STORAGE_KEY) ?? "{}");
+    if (Array.isArray(saved)) return Object.fromEntries(saved.filter(Number.isInteger).map((id) => [id, {}]));
+    return saved && typeof saved === "object" ? saved : {};
   } catch {
-    return new Set();
+    return {};
   }
 }
 
-/** Remembers a rated street on this phone only, so it is not asked about again. */
-export function rememberRated(wayId, storage = defaultStorage()) {
+/** Street (way) ids this phone has rated. Empty if storage is unavailable. */
+export function ratedStreets(storage = defaultStorage()) {
+  return new Set(Object.keys(myRatings(storage)).map(Number).filter(Number.isInteger));
+}
+
+/** This phone's rating of a street, or null. */
+export function myRating(wayId, storage = defaultStorage()) {
+  return myRatings(storage)[wayId] ?? null;
+}
+
+/** Remembers a rating on this phone only, so the street is not asked about again. */
+export function rememberRated(wayId, details = {}, storage = defaultStorage()) {
   try {
-    const ids = ratedStreets(storage);
-    ids.add(wayId);
-    storage?.setItem(STORAGE_KEY, JSON.stringify([...ids]));
+    const saved = myRatings(storage);
+    saved[wayId] = { ...saved[wayId], ...details };
+    storage?.setItem(STORAGE_KEY, JSON.stringify(saved));
   } catch {
     // Storage blocked: the street may be asked about again, which is harmless.
+  }
+}
+
+/** Forgets a removed rating, so the street can be asked about again. */
+export function forgetRated(wayId, storage = defaultStorage()) {
+  try {
+    const saved = myRatings(storage);
+    delete saved[wayId];
+    storage?.setItem(STORAGE_KEY, JSON.stringify(saved));
+  } catch {
+    // Storage blocked: nothing to forget.
   }
 }

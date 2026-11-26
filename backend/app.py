@@ -284,12 +284,29 @@ def create_nearest_street_response(payload: Any) -> tuple[int, dict[str, Any]]:
 def create_rating_response(way_id: int, payload: Any) -> tuple[int, dict[str, Any]]:
     if way_id not in WALKING_GRAPH.way_names:
         return 404, {"error": "That street is not on the walking network."}
+    payload = payload if isinstance(payload, dict) else {}
+    token = payload.get("token") if isinstance(payload.get("token"), str) else None
     try:
-        STORE.add_rating(way_id, payload.get("rating") if isinstance(payload, dict) else None)
+        # With the device's token for this street, its earlier rating is replaced, not added to.
+        token = STORE.add_rating(way_id, payload.get("rating"), token)
     except ValueError as error:
         return 400, {"error": str(error)}
     except StoreError:
         return 503, {"error": SAVE_FAILED}
+    return 200, {**street_payload(way_id), "token": token}
+
+
+def create_rating_removal_response(way_id: int, payload: Any) -> tuple[int, dict[str, Any]]:
+    """Removes the rating made on this device (identified by its token, sent in the body)."""
+    token = payload.get("token") if isinstance(payload, dict) else None
+    if not isinstance(token, str) or not token:
+        return 400, {"error": "A rating token is needed to remove a rating."}
+    try:
+        removed = STORE.remove_rating(way_id, token)
+    except StoreError:
+        return 503, {"error": SAVE_FAILED}
+    if not removed:
+        return 404, {"error": "That rating was not found. It may already be removed."}
     return 200, street_payload(way_id)
 
 
@@ -382,6 +399,15 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._covered(True)
 
     def do_DELETE(self) -> None:
+        parts = urlparse(self.path).path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "streets"] and parts[3] == "ratings" and parse_way_id(parts[2]) is not None:
+            try:
+                payload = self._read_json()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Request body must be valid JSON"})
+                return
+            self._send_json(*create_rating_removal_response(parse_way_id(parts[2]), payload))
+            return
         self._covered(False)
 
 

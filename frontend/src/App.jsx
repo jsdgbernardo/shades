@@ -8,13 +8,14 @@ import { CompassIcon, LocateIcon } from "./components/Icons.jsx";
 import StreetModal from "./components/StreetPanel.jsx";
 import PinCard from "./components/PinCard.jsx";
 import { pinnedName } from "./lib/pin.js";
-import { ConnectionError, fetchHealth, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, setCovered } from "./lib/api.js";
+import { ConnectionError, fetchHealth, fetchNearestStreet, fetchRoutes, fetchWeather, rateStreet, removeRating, setCovered } from "./lib/api.js";
 import { haversineMeters, isOffRoute, projectOntoRoute, remainingFigures } from "./lib/geo.js";
 import { arrivalSummary, buildManeuvers, cumulative, edgeAt, hasArrived, headingAt, nextManeuver } from "./lib/nav.js";
 import { ArrivalCard, NavBanner, NavBar, RateWalkCard } from "./components/NavPanel.jsx";
-import { rememberRated, ratedStreets, streetsToRate } from "./lib/ratePrompt.js";
+import { forgetRated, myRating, rememberRated, ratedStreets, streetsToRate } from "./lib/ratePrompt.js";
 import { MAX_ACCURACY_METERS, geolocation, locationProblem } from "./lib/location.js";
 import { requestCompassPermission, watchHeading } from "./lib/compass.js";
+import { addSample, afterPaint, describe as describeTiming, timingEnabled } from "./lib/timing.js";
 import { toInputValue, toOffsetIso } from "./lib/time.js";
 
 // Metro Manila until /api/health answers; the API's backend/area.py is the source of truth.
@@ -23,6 +24,8 @@ const inStudyArea = (latitude, longitude) =>
   latitude >= studyArea.south && latitude <= studyArea.north && longitude >= studyArea.west && longitude <= studyArea.east;
 // Notices from locationProblem() in lib/location.js.
 const LOCATION_NOTICE = /^(Location (access denied|too imprecise|unavailable)|You are outside)/;
+// Field-test timing readout (P-01, P-02), shown only with ?timing.
+const TIMING = timingEnabled();
 const GPS_OPTIONS = { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 };
 
 export default function App() {
@@ -145,6 +148,7 @@ export default function App() {
   const loadRoutes = useCallback(async () => {
     if (!start || !destination) { setStatus("idle"); setData(null); return; }
     const id = ++requestCounter.current;
+    const requestedAt = performance.now();
     setStatus("loading");
     setError("");
     try {
@@ -161,6 +165,8 @@ export default function App() {
       setTimeOffset(0);
       setStatus("results");
       mapRef.current?.fitGeometry(payload.routes.flatMap((route) => route.geometry));
+      // P-01 field timing: request until the routes are drawn (only with ?timing).
+      if (TIMING) afterPaint(() => setTiming((current) => ({ ...current, routes: addSample(current.routes, performance.now() - requestedAt, 10_000) })));
     } catch (failure) {
       if (id !== requestCounter.current) return;
       if (failure instanceof ConnectionError) setOnline(false);
@@ -227,11 +233,30 @@ export default function App() {
   const rate = async (value) => {
     setStreetBusy(true);
     try {
-      const updated = await rateStreet(street.way_id, value);
-      rememberRated(street.way_id); // not asked about again after a walk
+      // This phone's earlier rating of the street is replaced, not added to (PRD S-08).
+      const updated = await rateStreet(street.way_id, value, myRating(street.way_id)?.token);
+      rememberRated(street.way_id, { rating: value, token: updated.token }); // not asked about again after a walk
       setStreet((current) => ({ ...current, walkability: updated.walkability }));
       setStreetNotice(`Thanks. You rated ${updated.name} ${value} out of 5.`);
       if (data) loadRoutes(); // refresh routes already shown; never start a new search
+    } catch (failure) {
+      setStreetNotice(failure.message);
+    } finally {
+      setStreetBusy(false);
+    }
+  };
+
+  // Removes the rating this phone made for the open street (it keeps the token for that).
+  const removeMyRating = async () => {
+    const mine = myRating(street.way_id);
+    if (!mine?.token) return;
+    setStreetBusy(true);
+    try {
+      const updated = await removeRating(street.way_id, mine.token);
+      forgetRated(street.way_id);
+      setStreet((current) => ({ ...current, walkability: updated.walkability }));
+      setStreetNotice("Your rating was removed.");
+      if (data) loadRoutes();
     } catch (failure) {
       setStreetNotice(failure.message);
     } finally {
@@ -338,6 +363,7 @@ export default function App() {
       along: projection.along,
       onRoute: !isOffRoute(projection.distanceFromRoute),
       updatedAt: Date.now(),
+      fixAt: performance.now(),
       message: accuracy > MAX_ACCURACY_METERS ? `Your location is imprecise (about ±${Math.round(accuracy)} m).` : "",
     } : current));
     if (isOffRoute(projection.distanceFromRoute)) {
@@ -411,6 +437,14 @@ export default function App() {
     return () => { end(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [walk.active]);
 
+  // Field timing: P-02 measures a GPS fix until the walk figures are on screen.
+  const [timing, setTiming] = useState({});
+  useEffect(() => {
+    if (!TIMING || !walk.fixAt) return;
+    const fixAt = walk.fixAt;
+    afterPaint(() => setTiming((current) => ({ ...current, fix: addSample(current.fix, performance.now() - fixAt, 2_000) })));
+  }, [walk.fixAt]);
+
   // Which way the phone points, for the cone on the dot. Paused while the page is hidden.
   const [heading, setHeading] = useState(null);
   useEffect(() => {
@@ -478,8 +512,8 @@ export default function App() {
     try {
       // One rating for each walked piece of the street (OSM often splits one street into several ways).
       for (const wayId of street.way_ids) {
-        await rateStreet(wayId, value);
-        rememberRated(wayId);
+        const saved = await rateStreet(wayId, value, myRating(wayId)?.token);
+        rememberRated(wayId, { rating: value, token: saved.token });
       }
       setRated((current) => ({ ...current, [street.name]: value }));
       if (data) loadRoutes(); // refresh routes already shown; never start a new search
@@ -563,6 +597,11 @@ export default function App() {
           onTap={handleTap}
           onSelectRoute={setSelectedId}
         />
+        {TIMING && (
+          <div className="timing-readout" aria-live="off">
+            {describeTiming("Routes", timing.routes, 10_000)}<br />{describeTiming("Fix→figures", timing.fix, 2_000)}
+          </div>
+        )}
         {picking && (
           <div className={`pick-pin pick-pin--${picking} ${pinLifted ? "pick-pin--lifted" : ""}`} aria-hidden="true">
             <svg viewBox="0 0 30 40" width="30" height="40"><path d="M15 39S2 23.5 2 14.5a13 13 0 1 1 26 0C28 23.5 15 39 15 39Z" /><circle cx="15" cy="14.5" r="5" fill="#fff" /></svg>
@@ -643,7 +682,16 @@ export default function App() {
               onUndoCovered={undoCoveredHere}
             />
           ) : tap ? (
-            <StreetModal tap={tap} busy={streetBusy} notice={streetNotice} onRate={rate} onToggleCovered={toggleCovered} onClose={closeTap} />
+            <StreetModal
+              tap={tap}
+              busy={streetBusy}
+              notice={streetNotice}
+              mine={street ? myRating(street.way_id) : null}
+              onRate={rate}
+              onRemoveRating={removeMyRating}
+              onToggleCovered={toggleCovered}
+              onClose={closeTap}
+            />
           ) : null}
         />
       </section>

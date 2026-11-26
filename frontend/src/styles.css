@@ -295,3 +295,7 @@ button:disabled { opacity: .5; cursor: default; }
   :root { --glass: #fff; --glass-blur: none; --line: rgb(32 33 36 / 40%); }
   .location-card, .time-pill, .route-sheet, .float-card, .toast { border: 1px solid #5f6368; }
 }
+.street-card__mine { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.street-card__remove { min-height: 0; padding: 0; font-size: 12px; text-decoration: underline; }
+/* Field-test timing (?timing only): under the top cards, out of the way of the map. */
+.timing-readout { position: absolute; z-index: 560; left: var(--side-gap); top: var(--top-clearance); padding: 3px 6px; border-radius: 6px; color: #fff; background: rgb(32 33 36 / 75%); font: 10px/1.35 ui-monospace, monospace; pointer-events: none; }

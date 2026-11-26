@@ -81,6 +81,16 @@ class TursoStoreTests(unittest.TestCase):
         self.assertEqual(first.covered_edges(), set())
         self.assertEqual(set(self.paths), {"/v2/pipeline"})
 
+    def test_ratings_can_be_changed_and_removed_with_their_token(self):
+        store = TursoStore(self.url, "secret")
+        token = store.add_rating(1001, 2)
+        store.add_rating(1001, 5)
+        self.assertEqual(store.add_rating(1001, 4, token), token)
+        self.assertEqual(TursoStore(self.url, "secret").rating_stats([1001]), {1001: (2, 4.5)})
+        self.assertFalse(store.remove_rating(1001, "wrong-token"))
+        self.assertTrue(store.remove_rating(1001, token))
+        self.assertEqual(store.rating_stats([1001]), {1001: (1, 5.0)})
+
     def test_empty_street_list_needs_no_request(self):
         self.assertEqual(TursoStore(self.url, "secret").rating_stats([]), {})
         self.assertEqual(self.paths, [])
